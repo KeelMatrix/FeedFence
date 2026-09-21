@@ -33,6 +33,7 @@ Run the repository gates:
 pwsh ./scripts/Invoke-PlatformFixtures.ps1 -Configuration Release
 pwsh ./scripts/Invoke-PackGate.ps1 -Configuration Release
 pwsh ./scripts/Invoke-DependencyAudit.ps1
+pwsh ./scripts/Invoke-RepoHygiene.ps1
 dotnet format KeelMatrix.FeedFence.sln --verify-no-changes --no-restore
 ```
 
@@ -55,10 +56,10 @@ changelog remains under `[Unreleased]`:
 pwsh ./scripts/Invoke-ReleaseContract.ps1 -Tag v0.1.0
 ```
 
-After frontier approval, the release owner finalizes and verifies the changelog
-on the exact commit to be tagged. The tag-triggered workflow reruns the same
-check before obtaining a short-lived NuGet credential. Do not create a tag or
-publish a package as part of ordinary local validation.
+Finalize the changelog for the release version and verify it on the exact commit
+before it is tagged. Run the repository hygiene check before pushing and in the
+tag-triggered workflow before obtaining a short-lived NuGet credential. Do not
+create a tag or publish a package as part of ordinary local validation.
 
 ## Telemetry and fixtures
 

@@ -13,13 +13,14 @@ env:
   KEELMATRIX_NO_TELEMETRY: '1'
 
 jobs:
-  release:
-    name: Build, verify, and publish
+  verify:
+    name: Build and verify
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
-      id-token: write
+    outputs:
+      version: ${{ steps.release-version.outputs.version }}
 
     steps:
       - name: Check out tagged commit
@@ -31,6 +32,10 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.425
+
+      - name: Run repository hygiene check
+        shell: pwsh
+        run: pwsh ./scripts/Invoke-RepoHygiene.ps1
 
       - name: Validate release tag and changelog
         id: release-version
@@ -87,6 +92,22 @@ jobs:
             artifacts/packages/KeelMatrix.FeedFence.${{ steps.release-version.outputs.version }}.nupkg
             artifacts/packages/KeelMatrix.FeedFence.${{ steps.release-version.outputs.version }}.snupkg
 
+  publish:
+    name: Publish verified package
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download verified artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: feedfence-${{ needs.verify.outputs.version }}
+          path: artifacts/packages
+
       - name: Authenticate to NuGet.org with Trusted Publishing
         id: nuget-login
         uses: NuGet/login@v1
@@ -97,6 +118,6 @@ jobs:
         shell: pwsh
         run: >-
           dotnet nuget push
-          artifacts/packages/KeelMatrix.FeedFence.${{ steps.release-version.outputs.version }}.nupkg
+          artifacts/packages/KeelMatrix.FeedFence.${{ needs.verify.outputs.version }}.nupkg
           --source https://api.nuget.org/v3/index.json
           --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"
