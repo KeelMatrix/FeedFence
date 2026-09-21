@@ -2,7 +2,7 @@
 
 FeedFence checks whether your restored NuGet graph can come only from the sources you intended. It evaluates effective `nuget.config` settings and Package Source Mapping without restoring packages or contacting feeds.
 
-## Quick start
+## Install
 
 ```text
 dotnet tool install --global KeelMatrix.FeedFence
@@ -57,3 +57,12 @@ Opt out with `KEELMATRIX_NO_TELEMETRY=1`.
 
 The platform fixture runner is `pwsh ./scripts/Invoke-PlatformFixtures.ps1 -Configuration Release`. Windows has local passing evidence on the current
 host; Linux and macOS fixture runs remain unverified here.
+
+For the complete policy schema, diagnostic reference, and consumer-facing
+limitations, see the [FeedFence repository README](https://github.com/KeelMatrix/FeedFence#readme).
+The versioned JSON and SARIF compatibility rules are in the
+[report contract](https://github.com/KeelMatrix/FeedFence/blob/main/docs/report-contract.md).
+
+## License
+
+FeedFence is distributed under the [MIT License](https://github.com/KeelMatrix/FeedFence/blob/main/LICENSE).

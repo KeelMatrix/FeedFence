@@ -2,7 +2,7 @@
 
 **FeedFence checks whether your restored NuGet graph can come only from the sources you intended.** It evaluates effective `nuget.config` settings and Package Source Mapping, then fails on ambiguous, incomplete, or machine-dependent restore policy.
 
-## Install and quick start
+## Install
 
 ```text
 dotnet tool install --global KeelMatrix.FeedFence
@@ -12,7 +12,7 @@ feedfence check
 
 FeedFence reads existing `project.assets.json` and/or `packages.lock.json`. It never runs restore, contacts a package feed, invokes a credential provider, or connects to a database. Restore the repository first.
 
-## Install, update, and uninstall
+## Tool lifecycle
 
 Global tool:
 
@@ -31,7 +31,7 @@ dotnet tool update --local KeelMatrix.FeedFence
 dotnet tool uninstall --local KeelMatrix.FeedFence
 ```
 
-## Five-minute quick start
+## Quick Start
 
 ```text
 dotnet restore
@@ -39,6 +39,14 @@ feedfence check
 ```
 
 Name a target explicitly with `feedfence check ./src/App/App.csproj`. Restore must already have produced `project.assets.json` or `packages.lock.json`; missing, malformed, or disagreeing artifacts fail with exit code `2`.
+
+## Documentation
+
+- [Developer guide](docs/DEV.md) — repository prerequisites and validation gates.
+- [Report contract](docs/report-contract.md) — JSON and SARIF compatibility rules.
+- [Security policy](SECURITY.md) — private vulnerability reporting and product boundaries.
+- [Privacy](PRIVACY.md) — telemetry and data-handling contract.
+- [Contributing](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) — community guidance.
 
 ## Command contract
 
@@ -156,3 +164,7 @@ pwsh ./scripts/Invoke-DependencyAudit.ps1
 ```
 
 The Phase 0 probe remains the NuGet-equivalence guard. It uses synthetic local file feeds only and does not contact real package sources.
+
+## License
+
+FeedFence is distributed under the [MIT License](LICENSE).

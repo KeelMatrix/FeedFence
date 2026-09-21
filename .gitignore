@@ -22,6 +22,15 @@ tests/Phase0Probe/Fixtures/run/
 *.nuget.g.targets
 project.assets.json
 packages.lock.json
+TestResults/
+*.log
+
+## Secrets and local environment
+.env
+.env.*
+!.env.example
+*.user.json
+.telemetry/
 
 ## OS files
 Thumbs.db
