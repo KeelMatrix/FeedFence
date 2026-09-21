@@ -171,7 +171,7 @@ try {
             }
         }
 
-        $forbidden = @($entryNames | Where-Object { $_ -match '(^|/)(AGENTS\.md|\.env[^/]*|tests?/|bin/|obj/|paperclip-guide/)' })
+        $forbidden = @($entryNames | Where-Object { $_ -match '(^|/)(\.env[^/]*|tests?/|bin/|obj/|artifacts?/|temp/|tmp/|guides?/|\.github/)' })
         if ($forbidden.Count -ne 0) {
             throw "Shipping package contains forbidden entries: $($forbidden -join ', ')"
         }
