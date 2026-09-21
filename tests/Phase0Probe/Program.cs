@@ -466,7 +466,13 @@ internal sealed class ProbeRunner
         }
     }
 
-    private static string Label(string path) => new DirectoryInfo(path).Parent?.Name ?? Path.GetFileName(path);
+    private static string Label(string path)
+    {
+        var directory = new DirectoryInfo(path);
+        return string.Equals(directory.Name, "repository", StringComparison.OrdinalIgnoreCase)
+            ? directory.Parent?.Name ?? directory.Name
+            : directory.Name;
+    }
 
     private static string Sanitize(string value) => new(value.Select(character => char.IsLetterOrDigit(character) ? character : '-').ToArray());
 
@@ -573,7 +579,10 @@ internal sealed class ProbeEnvironment : IDisposable
             ["DOTNET_CLI_HOME"] = Path.Combine(runRoot, "dotnet-home"),
             ["NUGET_PLUGIN_PATHS"] = string.Empty,
             ["NUGET_CREDENTIALPROVIDERS_PATH"] = string.Empty,
-            ["NUGET_CERT_REVOCATION_MODE"] = "offline"
+            ["NUGET_CERT_REVOCATION_MODE"] = "offline",
+            ["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1",
+            ["DOTNET_SKIP_FIRST_TIME_EXPERIENCE"] = "1",
+            ["DOTNET_NOLOGO"] = "1"
         };
 
         foreach (var pair in values)
