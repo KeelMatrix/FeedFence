@@ -78,7 +78,7 @@ jobs:
           pwsh ./scripts/Invoke-ReleaseContract.ps1 -Tag "${{ github.ref_name }}" -ArtifactDirectory artifacts/packages
 
       - name: Upload verified artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: feedfence-${{ steps.release-version.outputs.version }}
           if-no-files-found: error
