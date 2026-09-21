@@ -1,0 +1,28 @@
+## Build output
+bin/
+obj/
+artifacts/
+
+## Local probe runs
+tests/Phase0Probe/.probe-run/
+tests/Phase0Probe/Fixtures/run/
+
+## IDE and local state
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## NuGet and local package output
+*.nupkg
+*.snupkg
+*.nuget.g.props
+*.nuget.g.targets
+project.assets.json
+packages.lock.json
+
+## OS files
+Thumbs.db
+Desktop.ini

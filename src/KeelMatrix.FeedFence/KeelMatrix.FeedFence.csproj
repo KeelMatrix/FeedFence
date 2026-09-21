@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>KeelMatrix.FeedFence</AssemblyName>
+    <RootNamespace>KeelMatrix.FeedFence</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <IsShippingProject>true</IsShippingProject>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>feedfence</ToolCommandName>
+    <PackageId>KeelMatrix.FeedFence</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>KeelMatrix</Authors>
+    <Company>KeelMatrix</Company>
+    <Description>Audits effective NuGet package sources and Package Source Mapping against the resolved dependency graph. Detects ambiguous, unmapped, inherited, and unsafe restore-source policy.</Description>
+    <PackageTags>nuget;package-source-mapping;nuget-config;dependency-confusion;package-feeds;restore;supply-chain;ci;dotnet-tool</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
+    <RepositoryUrl>https://github.com/KeelMatrix/FeedFence</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/KeelMatrix/FeedFence</PackageProjectUrl>
+    <PackageReleaseNotes>Phase 0 feasibility probe foundation.</PackageReleaseNotes>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
+    <None Include="README.md" Pack="true" PackagePath="" />
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="LICENSE" />
+    <None Include="..\..\icon.png" Pack="true" PackagePath="icon.png" Link="icon.png" />
+  </ItemGroup>
+</Project>
