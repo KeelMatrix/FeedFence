@@ -75,9 +75,11 @@ internal sealed class FeedFenceAnalyzer
         }
 
         var deterministicMappings = 0;
+        var effectiveSourcePolicyEvaluated = false;
         foreach (var packageId in packageIds)
         {
             var selection = configuration.Select(packageId);
+            effectiveSourcePolicyEvaluated = true;
             if (configuration.MappingEnabled)
             {
                 if (selection.Sources.Count == 0)
@@ -139,6 +141,7 @@ internal sealed class FeedFenceAnalyzer
             configuration.ActiveSources.Count,
             configuration.MappingEnabled,
             deterministicMappings,
+            effectiveSourcePolicyEvaluated,
             configuration.Sources,
             ordered);
     }

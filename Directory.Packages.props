@@ -5,6 +5,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="8.0.0" />
+    <PackageVersion Include="KeelMatrix.Telemetry" Version="0.1.0" />
     <PackageVersion Include="NuGet.Configuration" Version="7.9.0" />
   </ItemGroup>
 </Project>

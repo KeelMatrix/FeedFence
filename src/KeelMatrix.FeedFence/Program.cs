@@ -20,7 +20,8 @@ internal static class Program
             }
 
             var result = FeedFenceAnalyzer.Analyze(options);
-            Console.Write(TextReport.Render(result));
+            Console.Write(ReportRenderer.Render(result, options.Format));
+            FeedFenceTelemetry.TrackActivation(result);
             return result.ExitCode;
         }
         catch (InvocationException exception)
@@ -62,7 +63,8 @@ internal sealed record CliOptions(
     string? TargetPath,
     string? ConfigPath,
     string? PolicyPath,
-    bool Strict)
+    bool Strict,
+    ReportFormat Format)
 {
     public static readonly string HelpText = string.Join(
         Environment.NewLine,
@@ -78,7 +80,9 @@ internal sealed record CliOptions(
             "  --config <path>  Use this NuGet configuration instead of hierarchy discovery.",
             "  --policy <path>  Use this feedfence.json instead of the repository default.",
             "  --strict         Treat inherited active sources (FF005) as violations.",
-            "  --format text    Select deterministic human-readable output (the v1 format).",
+            "  --format text|json|sarif",
+            "                   Select deterministic human-readable, JSON, or SARIF output.",
+            "  KEELMATRIX_NO_TELEMETRY=1 disables FeedFence telemetry.",
             "  -h, --help       Show this help.",
             "",
             "Exit codes:",
@@ -96,12 +100,12 @@ internal sealed record CliOptions(
 
         if (args.Count == 1 && args[0] is "--help" or "-h")
         {
-            return new(true, false, null, null, null, false);
+            return new(true, false, null, null, null, false, ReportFormat.Text);
         }
 
         if (args.Count == 1 && args[0] == "--version")
         {
-            return new(false, true, null, null, null, false);
+            return new(false, true, null, null, null, false, ReportFormat.Text);
         }
 
         if (args[0] != "check")
@@ -120,7 +124,7 @@ internal sealed record CliOptions(
             var argument = args[index];
             if (argument is "--help" or "-h")
             {
-                return new(true, false, null, null, null, false);
+                return new(true, false, null, null, null, false, ReportFormat.Text);
             }
 
             if (argument == "--strict")
@@ -176,13 +180,28 @@ internal sealed record CliOptions(
             targetPath = argument;
         }
 
-        if (!string.Equals(format, "text", StringComparison.OrdinalIgnoreCase))
+        var reportFormat = format.ToLowerInvariant() switch
         {
-            throw new InvocationException("only --format text is available in this milestone.");
+            "text" => ReportFormat.Text,
+            "json" => ReportFormat.Json,
+            "sarif" => ReportFormat.Sarif,
+            _ => throw new InvocationException("--format must be text, json, or sarif.")
+        };
+
+        if (string.IsNullOrWhiteSpace(format))
+        {
+            throw new InvocationException("--format must be text, json, or sarif.");
         }
 
-        return new(false, false, targetPath, configPath, policyPath, strict);
+        return new(false, false, targetPath, configPath, policyPath, strict, reportFormat);
     }
+}
+
+internal enum ReportFormat
+{
+    Text,
+    Json,
+    Sarif
 }
 
 internal enum DiagnosticSeverity
@@ -205,6 +224,7 @@ internal sealed record AnalysisResult(
     int ActiveSourceCount,
     bool MappingEnabled,
     int DeterministicMappingCount,
+    bool EffectiveSourcePolicyEvaluated,
     IReadOnlyList<SourceInfo> Sources,
     IReadOnlyList<Diagnostic> Diagnostics);
 

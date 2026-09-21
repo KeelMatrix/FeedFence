@@ -37,7 +37,7 @@ internal sealed class TextReport
             lines.Add($"Policy violations: {violationCount}.");
         }
 
-        return string.Join(Environment.NewLine, lines) + Environment.NewLine;
+        return string.Join("\n", lines) + "\n";
     }
 
     private static string SeverityText(DiagnosticSeverity severity) => severity switch

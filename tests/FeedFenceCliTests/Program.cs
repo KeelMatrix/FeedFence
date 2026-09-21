@@ -57,6 +57,54 @@ internal sealed class Fixture : IDisposable
         AssertNotContains(specificityOutput, "FF002");
         AssertContains(specificityOutput, "FF008");
 
+        var json = Run("check", specificity.Project, "--config", specificity.Config, "--format", "json");
+        AssertEqual(0, json.ExitCode, "JSON exit code");
+        AssertNotContains(json.StandardError, "noise");
+        AssertEqual(string.Empty, json.StandardError, "JSON stderr");
+        using (var jsonDocument = JsonDocument.Parse(json.StandardOutput))
+        {
+            AssertEqual(1, jsonDocument.RootElement.GetProperty("schemaVersion").GetInt32(), "JSON schema version");
+            AssertEqual("json", jsonDocument.RootElement.GetProperty("format").GetString(), "JSON format");
+            AssertEqual("FF008", jsonDocument.RootElement.GetProperty("diagnostics").EnumerateArray().Single(diagnostic => diagnostic.GetProperty("code").GetString() == "FF008").GetProperty("code").GetString(), "JSON diagnostic identity");
+        }
+
+        var jsonRepeat = Run("check", specificity.Project, "--config", specificity.Config, "--format", "json");
+        AssertEqual(json.StandardOutput, jsonRepeat.StandardOutput, "JSON byte determinism");
+
+        var sarif = Run("check", specificity.Project, "--config", specificity.Config, "--format", "sarif");
+        AssertEqual(0, sarif.ExitCode, "SARIF exit code");
+        AssertEqual(string.Empty, sarif.StandardError, "SARIF stderr");
+        using (var sarifDocument = JsonDocument.Parse(sarif.StandardOutput))
+        {
+            var driver = sarifDocument.RootElement.GetProperty("runs")[0].GetProperty("tool").GetProperty("driver");
+            AssertEqual("FF008", driver.GetProperty("rules").EnumerateArray().Single(rule => rule.GetProperty("id").GetString() == "FF008").GetProperty("id").GetString(), "SARIF diagnostic rule");
+            AssertEqual("FF008", sarifDocument.RootElement.GetProperty("runs")[0].GetProperty("results").EnumerateArray().Single(result => result.GetProperty("ruleId").GetString() == "FF008").GetProperty("ruleId").GetString(), "SARIF result identity");
+        }
+
+        var sarifRepeat = Run("check", specificity.Project, "--config", specificity.Config, "--format", "sarif");
+        AssertEqual(sarif.StandardOutput, sarifRepeat.StandardOutput, "SARIF byte determinism");
+
+        var telemetryResult = new AnalysisResult(
+            0,
+            6,
+            3,
+            true,
+            2,
+            true,
+            [new SourceInfo("public", "file:///local", true, "repository-controlled configuration", true)],
+            [new Diagnostic("FF005", DiagnosticSeverity.Warning, "synthetic warning")]);
+        var telemetryJson = FeedFenceTelemetry.SerializePayload(telemetryResult);
+        using (var telemetryDocument = JsonDocument.Parse(telemetryJson))
+        {
+            var properties = telemetryDocument.RootElement.EnumerateObject().Select(property => property.Name).ToArray();
+            AssertEqual(
+                "feedFenceVersion,dotnetMajorVersion,osFamily,resolvedPackageCountBucket,activeSourceCountBucket,packageSourceMappingEnabled,resultClass,diagnosticCountBucket",
+                string.Join(',', properties),
+                "telemetry payload shape");
+        }
+
+        AssertEqual(null, FeedFenceTelemetry.CreatePayload(new AnalysisResult(0, 0, 1, false, 0, false, [], [])), "no-package telemetry activation");
+
         var equal = CreateCase("equal", ["Feed.Equal"],
             [
                 "<packageSourceMapping><packageSource key=\"left\"><package pattern=\"Feed.Equal\" /></packageSource><packageSource key=\"right\"><package pattern=\"Feed.Equal\" /></packageSource></packageSourceMapping>",
@@ -105,6 +153,8 @@ internal sealed class Fixture : IDisposable
         File.WriteAllText(malformedPolicy, "{\"exceptions\":[{\"code\":\"FF005\"}]}", Encoding.UTF8);
         var malformed = Run("check", specificity.Project, "--config", specificity.Config, "--policy", malformedPolicy);
         AssertEqual(2, malformed.ExitCode, "malformed policy exit code");
+        AssertEqual(string.Empty, malformed.StandardOutput, "malformed policy stdout");
+        AssertContains(malformed.StandardError, "Analysis error");
         AssertNotContains(malformed.Output, specificity.Root);
 
         var missing = Path.Combine(_root, "missing");
@@ -112,6 +162,8 @@ internal sealed class Fixture : IDisposable
         File.WriteAllText(Path.Combine(missing, "Project.csproj"), "<Project />", Encoding.UTF8);
         var missingResult = Run("check", Path.Combine(missing, "Project.csproj"), "--config", specificity.Config);
         AssertEqual(2, missingResult.ExitCode, "missing restore artifact exit code");
+        AssertEqual(string.Empty, missingResult.StandardOutput, "missing artifact stdout");
+        AssertContains(missingResult.StandardError, "Analysis error");
         AssertContains(missingResult.Output, "restore artifacts are missing");
 
         var authConfig = Path.Combine(_root, "authenticated.config");
@@ -171,6 +223,8 @@ internal sealed class Fixture : IDisposable
             UseShellExecute = false,
             CreateNoWindow = true
         };
+        startInfo.Environment["KEELMATRIX_NO_TELEMETRY"] = "1";
+        startInfo.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
         startInfo.ArgumentList.Add(_tool);
         foreach (var arg in args)
         {
@@ -181,7 +235,7 @@ internal sealed class Fixture : IDisposable
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
         process.WaitForExit();
-        return new(process.ExitCode, output.Result + error.Result);
+        return new(process.ExitCode, output.Result, error.Result);
     }
 
     private void AssertProcess(int expectedExitCode, params string[] args)
@@ -230,4 +284,7 @@ internal sealed class Fixture : IDisposable
 }
 
 internal sealed record TestCase(string Root, string Project, string Config);
-internal sealed record ProcessResult(int ExitCode, string Output);
+internal sealed record ProcessResult(int ExitCode, string StandardOutput, string StandardError)
+{
+    public string Output => StandardOutput + StandardError;
+}
