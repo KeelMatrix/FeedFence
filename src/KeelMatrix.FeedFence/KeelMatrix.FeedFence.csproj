@@ -6,6 +6,10 @@
     <RootNamespace>KeelMatrix.FeedFence</RootNamespace>
     <IsPackable>true</IsPackable>
     <IsShippingProject>true</IsShippingProject>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>feedfence</ToolCommandName>
     <PackageId>KeelMatrix.FeedFence</PackageId>
@@ -20,11 +24,12 @@
     <RepositoryUrl>https://github.com/KeelMatrix/FeedFence</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageProjectUrl>https://github.com/KeelMatrix/FeedFence</PackageProjectUrl>
-    <PackageReleaseNotes>Phase 0 feasibility probe foundation.</PackageReleaseNotes>
+    <PackageReleaseNotes>Offline effective NuGet source and Package Source Mapping policy analysis for restored dependency graphs.</PackageReleaseNotes>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="NuGet.Configuration" />
     <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
     <None Include="README.md" Pack="true" PackagePath="" />
     <None Include="..\..\LICENSE" Pack="true" PackagePath="LICENSE" />

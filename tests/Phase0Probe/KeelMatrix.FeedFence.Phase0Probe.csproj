@@ -4,6 +4,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>KeelMatrix.FeedFence.Phase0Probe</RootNamespace>
     <AssemblyName>KeelMatrix.FeedFence.Phase0Probe</AssemblyName>
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>

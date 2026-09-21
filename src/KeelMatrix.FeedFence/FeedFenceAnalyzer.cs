@@ -1,0 +1,590 @@
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Xml;
+using NuGet.Configuration;
+
+namespace KeelMatrix.FeedFence;
+
+internal sealed class FeedFenceAnalyzer
+{
+    public static AnalysisResult Analyze(CliOptions options)
+    {
+        var target = TargetResolver.Resolve(options.TargetPath);
+        var configuration = EffectiveConfig.Load(target.RepositoryRoot, options.ConfigPath);
+        var policy = FeedFencePolicy.Load(target.RepositoryRoot, options.PolicyPath);
+        var packageIds = RestoreGraphReader.ReadFromProjects(target.ProjectPaths);
+        var diagnostics = new List<Diagnostic>();
+
+        foreach (var source in configuration.Sources.Where(source => source.IsEnabled))
+        {
+            if (!source.IsRepositoryControlled)
+            {
+                AddDiagnostic(
+                    diagnostics,
+                    policy,
+                    new Diagnostic(
+                        "FF005",
+                        options.Strict ? DiagnosticSeverity.Violation : DiagnosticSeverity.Warning,
+                        $"Active source key \"{source.Key}\" is inherited from {source.Provenance}; configuration provenance is not repository-controlled.",
+                        SourceKeys: [source.Key]));
+            }
+
+            if (source.Value.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+            {
+                AddDiagnostic(
+                    diagnostics,
+                    policy,
+                    new Diagnostic(
+                        "FF006",
+                        DiagnosticSeverity.Violation,
+                        $"Source key \"{source.Key}\" uses an insecure HTTP source; use HTTPS or a documented local exception.",
+                        SourceKeys: [source.Key]));
+            }
+        }
+
+        if (!configuration.MappingEnabled && configuration.ActiveSources.Count > 1)
+        {
+            AddDiagnostic(
+                diagnostics,
+                policy,
+                new Diagnostic(
+                    "FF001",
+                    DiagnosticSeverity.Violation,
+                    $"Multiple active sources are available without Package Source Mapping: {FormatSourceKeys(configuration.ActiveSources)}.",
+                    SourceKeys: configuration.ActiveSources.Select(source => source.Key).ToArray()));
+        }
+
+        foreach (var mapping in configuration.Mappings)
+        {
+            var exact = configuration.Sources.Any(source => string.Equals(source.Key, mapping.SourceKey, StringComparison.Ordinal));
+            var caseInsensitive = configuration.Sources.Any(source => string.Equals(source.Key, mapping.SourceKey, StringComparison.OrdinalIgnoreCase));
+            if (!exact)
+            {
+                var suffix = caseInsensitive
+                    ? " The configured source key differs only by casing."
+                    : " No configured source has this key.";
+                AddDiagnostic(
+                    diagnostics,
+                    policy,
+                    new Diagnostic(
+                        "FF004",
+                        DiagnosticSeverity.Violation,
+                        $"Mapping source key \"{mapping.SourceKey}\" does not match a configured source key exactly.{suffix}",
+                        SourceKeys: [mapping.SourceKey]));
+            }
+        }
+
+        var deterministicMappings = 0;
+        foreach (var packageId in packageIds)
+        {
+            var selection = configuration.Select(packageId);
+            if (configuration.MappingEnabled)
+            {
+                if (selection.Sources.Count == 0)
+                {
+                    AddDiagnostic(
+                        diagnostics,
+                        policy,
+                        new Diagnostic(
+                            "FF003",
+                            DiagnosticSeverity.Violation,
+                            $"Resolved package \"{packageId}\" has no eligible active source under Package Source Mapping.",
+                            packageId));
+                }
+                else if (selection.Sources.Count == 1)
+                {
+                    deterministicMappings++;
+                }
+                else
+                {
+                    AddDiagnostic(
+                        diagnostics,
+                        policy,
+                        new Diagnostic(
+                            "FF002",
+                            DiagnosticSeverity.Violation,
+                            $"Resolved package \"{packageId}\" is eligible from {FormatSourceKeys(selection.Sources)} at the same winning mapping specificity ({FormatPatterns(selection.WinningPatterns)}).",
+                            packageId,
+                            selection.Sources.Select(source => source.Key).ToArray()));
+                }
+
+                AddProtectedPackageDiagnostics(diagnostics, policy, packageId, selection);
+            }
+            else
+            {
+                AddProtectedPackageDiagnostics(diagnostics, policy, packageId, selection);
+            }
+        }
+
+        if (configuration.MappingEnabled)
+        {
+            AddDiagnostic(
+                diagnostics,
+                policy,
+                new Diagnostic(
+                    "FF008",
+                    DiagnosticSeverity.Information,
+                    "Package Source Mapping constrains package downloads; it does not constrain every NuGet metadata query."));
+        }
+
+        var ordered = diagnostics
+            .OrderBy(diagnostic => diagnostic.Code, StringComparer.Ordinal)
+            .ThenBy(diagnostic => diagnostic.PackageId ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(diagnostic => diagnostic.Message, StringComparer.Ordinal)
+            .ToArray();
+        var exitCode = ordered.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Violation) ? 1 : 0;
+        return new(
+            exitCode,
+            packageIds.Count,
+            configuration.ActiveSources.Count,
+            configuration.MappingEnabled,
+            deterministicMappings,
+            configuration.Sources,
+            ordered);
+    }
+
+    private static void AddProtectedPackageDiagnostics(
+        ICollection<Diagnostic> diagnostics,
+        FeedFencePolicy policy,
+        string packageId,
+        MappingSelection selection)
+    {
+        foreach (var rule in policy.PackageRules.Where(rule => PatternMatcher.Matches(rule.Pattern, packageId)))
+        {
+            var outsideAllowedSources = rule.AllowedSources.Count > 0
+                ? selection.Sources.Where(source => !rule.AllowedSources.Contains(source.Key, StringComparer.OrdinalIgnoreCase)).ToArray()
+                : selection.Sources.Where(source => !policy.IsTrusted(source.Key)).ToArray();
+            if (outsideAllowedSources.Length == 0)
+            {
+                continue;
+            }
+
+            var kind = rule.IsPrivate ? "private" : "protected";
+            AddDiagnostic(
+                diagnostics,
+                policy,
+                new Diagnostic(
+                    "FF007",
+                    DiagnosticSeverity.Violation,
+                    $"{kind} package \"{packageId}\" can resolve from source keys {FormatSourceKeys(outsideAllowedSources)} outside its declared trust set (pattern \"{rule.Pattern}\").",
+                    packageId,
+                    outsideAllowedSources.Select(source => source.Key).ToArray()));
+        }
+    }
+
+    private static void AddDiagnostic(ICollection<Diagnostic> diagnostics, FeedFencePolicy policy, Diagnostic diagnostic)
+    {
+        if (!string.Equals(diagnostic.Code, "FF008", StringComparison.Ordinal) && policy.IsExcepted(diagnostic))
+        {
+            return;
+        }
+
+        if (!diagnostics.Any(existing => existing.Code == diagnostic.Code &&
+            existing.PackageId == diagnostic.PackageId &&
+            existing.Message == diagnostic.Message))
+        {
+            diagnostics.Add(diagnostic);
+        }
+    }
+
+    private static string FormatSourceKeys(IEnumerable<SourceInfo> sources) =>
+        string.Join(", ", sources.Select(source => $"\"{RedactLabel(source.Key)}\"").Order(StringComparer.Ordinal));
+
+    private static string FormatSourceKeys(IEnumerable<string> keys) =>
+        string.Join(", ", keys.Select(key => $"\"{RedactLabel(key)}\"").Order(StringComparer.Ordinal));
+
+    private static string FormatPatterns(IEnumerable<string> patterns) =>
+        string.Join(", ", patterns.Select(pattern => $"\"{RedactLabel(pattern)}\"").Order(StringComparer.Ordinal));
+
+    internal static string RedactLabel(string value) =>
+        new(value.Where(character => !char.IsControl(character)).ToArray());
+}
+
+internal sealed class EffectiveConfig
+{
+    private readonly PackageSourceMapping _mapping;
+
+    private EffectiveConfig(
+        PackageSourceMapping mapping,
+        IReadOnlyList<SourceInfo> sources,
+        IReadOnlyList<MappingPattern> mappings)
+    {
+        _mapping = mapping;
+        Sources = sources;
+        Mappings = mappings;
+        ActiveSources = sources.Where(source => source.IsEnabled).OrderBy(source => source.Key, StringComparer.Ordinal).ToArray();
+    }
+
+    public IReadOnlyList<SourceInfo> Sources { get; }
+    public IReadOnlyList<SourceInfo> ActiveSources { get; }
+    public IReadOnlyList<MappingPattern> Mappings { get; }
+    public bool MappingEnabled => _mapping.IsEnabled;
+
+    public static EffectiveConfig Load(string repositoryRoot, string? configPath)
+    {
+        try
+        {
+            ISettings settings;
+            if (configPath is null)
+            {
+                settings = Settings.LoadDefaultSettings(repositoryRoot);
+            }
+            else
+            {
+                var fullConfigPath = SafeFullPath(configPath);
+                EnsureFile(fullConfigPath, "NuGet configuration");
+                ValidateXmlFile(fullConfigPath, InputLimits.MaxConfigBytes);
+                settings = Settings.LoadSettingsGivenConfigPaths([fullConfigPath]);
+            }
+
+            if (settings is not Settings concreteSettings)
+            {
+                throw new AnalysisException("NuGet configuration did not return a supported settings object.");
+            }
+
+            foreach (var path in concreteSettings.GetConfigFilePaths().Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (File.Exists(path))
+                {
+                    ValidateXmlFile(path, InputLimits.MaxConfigBytes);
+                }
+            }
+
+            var packageSourceItems = settings.GetSection("packageSources")?.Items.OfType<SourceItem>().ToArray() ?? [];
+            var loadedSources = new PackageSourceProvider(settings).LoadPackageSources().ToArray();
+            if (loadedSources.Length > 256)
+            {
+                throw new AnalysisException("the effective NuGet configuration contains too many package sources.");
+            }
+
+            var sources = loadedSources
+                .Select(source =>
+                {
+                    var sourceItem = packageSourceItems.FirstOrDefault(item =>
+                        string.Equals(item.Key, source.Name, StringComparison.OrdinalIgnoreCase));
+                    var configOrigin = sourceItem?.ConfigPath ?? string.Empty;
+                    var provenance = Provenance.Classify(configOrigin, repositoryRoot);
+                    return new SourceInfo(
+                        FeedFenceAnalyzer.RedactLabel(source.Name),
+                        source.Source,
+                        source.IsEnabled,
+                        provenance.Label,
+                        provenance.IsRepositoryControlled);
+                })
+                .OrderBy(source => source.Key, StringComparer.Ordinal)
+                .ToArray();
+
+            var mapping = PackageSourceMapping.GetPackageSourceMapping(settings);
+            var mappingItems = new PackageSourceMappingProvider(settings).GetPackageSourceMappingItems();
+            if (mappingItems.Count > 256)
+            {
+                throw new AnalysisException("the effective NuGet configuration contains too many source mappings.");
+            }
+
+            var mappings = mappingItems
+                .SelectMany(item => item.Patterns.Select(pattern => new MappingPattern(item.Key, pattern.Pattern)))
+                .ToArray();
+            if (mappings.Length > 4096)
+            {
+                throw new AnalysisException("the effective NuGet configuration contains too many mapping patterns.");
+            }
+
+            foreach (var pattern in mappings)
+            {
+                PatternMatcher.Validate(pattern.Pattern);
+            }
+
+            return new(mapping, sources, mappings);
+        }
+        catch (AnalysisException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            throw new AnalysisException("NuGet configuration could not be read or is not valid.");
+        }
+    }
+
+    public MappingSelection Select(string packageId)
+    {
+        try
+        {
+            if (!_mapping.IsEnabled)
+            {
+                return new(ActiveSources, []);
+            }
+
+            var configuredNames = _mapping.GetConfiguredPackageSources(packageId);
+            var configuredActiveSources = configuredNames
+                .Select(name => Sources.FirstOrDefault(source =>
+                    source.IsEnabled && string.Equals(source.Key, name, StringComparison.OrdinalIgnoreCase)))
+                .Where(source => source is not null)
+                .Cast<SourceInfo>()
+                .DistinctBy(source => source.Key, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var matchingPatterns = Mappings
+                .Where(mapping => PatternMatcher.Matches(mapping.Pattern, packageId))
+                .Select(mapping => new MatchedPattern(
+                    mapping,
+                    Sources.FirstOrDefault(source =>
+                        source.IsEnabled && string.Equals(source.Key, mapping.SourceKey, StringComparison.OrdinalIgnoreCase)),
+                    PatternMatcher.Specificity(mapping.Pattern)))
+                .Where(item => item.Source is not null)
+                .ToArray();
+
+            var winners = matchingPatterns.Length == 0
+                ? []
+                : matchingPatterns
+                    .Where(item => item.Score == matchingPatterns.Max(candidate => candidate.Score))
+                    .Select(item => item.Source!)
+                    .DistinctBy(source => source.Key, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            var winningPatterns = matchingPatterns.Length == 0
+                ? []
+                : matchingPatterns
+                    .Where(item => item.Score == matchingPatterns.Max(candidate => candidate.Score))
+                    .Select(item => item.Mapping.Pattern)
+                    .Distinct(StringComparer.Ordinal)
+                    .Order(StringComparer.Ordinal)
+                    .ToArray();
+
+            var configuredSet = configuredActiveSources.Select(source => source.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var winnerSet = winners.Select(source => source.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (!configuredSet.SetEquals(winnerSet))
+            {
+                throw new AnalysisException("NuGet Package Source Mapping returned an eligibility set that could not be reconciled with its documented specificity rules.");
+            }
+
+            return new(configuredActiveSources.OrderBy(source => source.Key, StringComparer.Ordinal).ToArray(), winningPatterns);
+        }
+        catch (AnalysisException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            throw new AnalysisException("Package Source Mapping could not be evaluated safely.");
+        }
+    }
+
+    private static void ValidateXmlFile(string path, int maxBytes)
+    {
+        var fileInfo = new FileInfo(path);
+        if (fileInfo.Length > maxBytes)
+        {
+            throw new AnalysisException("a NuGet configuration file exceeds the supported input size.");
+        }
+
+        var settings = new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit,
+            XmlResolver = null,
+            MaxCharactersInDocument = maxBytes
+        };
+        using var reader = XmlReader.Create(path, settings);
+        var depth = 0;
+        var elements = 0;
+        while (reader.Read())
+        {
+            depth = Math.Max(depth, reader.Depth);
+            if (depth > InputLimits.MaxXmlDepth)
+            {
+                throw new AnalysisException("a NuGet configuration file exceeds the supported XML depth.");
+            }
+
+            if (reader.NodeType == XmlNodeType.Element && ++elements > InputLimits.MaxXmlElements)
+            {
+                throw new AnalysisException("a NuGet configuration file contains too many XML elements.");
+            }
+        }
+    }
+
+    private static string SafeFullPath(string path)
+    {
+        try
+        {
+            return Path.GetFullPath(path);
+        }
+        catch
+        {
+            throw new AnalysisException("a supplied configuration path is invalid.");
+        }
+    }
+
+    private static void EnsureFile(string path, string kind)
+    {
+        if (!File.Exists(path))
+        {
+            throw new AnalysisException($"the supplied {kind} could not be read.");
+        }
+    }
+}
+
+internal static class Provenance
+{
+    public static (string Label, bool IsRepositoryControlled) Classify(string configPath, string repositoryRoot)
+    {
+        if (string.IsNullOrWhiteSpace(configPath))
+        {
+            return ("unknown inherited configuration", false);
+        }
+
+        var fullConfigPath = Path.GetFullPath(configPath);
+        if (IsWithinDirectory(fullConfigPath, repositoryRoot))
+        {
+            return ("repository-controlled configuration", true);
+        }
+
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        if (!string.IsNullOrWhiteSpace(appData) && IsWithinDirectory(fullConfigPath, appData))
+        {
+            return ("user-inherited configuration", false);
+        }
+
+        var commonData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        if (!string.IsNullOrWhiteSpace(commonData) && IsWithinDirectory(fullConfigPath, commonData))
+        {
+            return ("machine-inherited configuration", false);
+        }
+
+        return ("external inherited configuration", false);
+    }
+
+    private static bool IsWithinDirectory(string path, string directory)
+    {
+        var relative = Path.GetRelativePath(Path.GetFullPath(directory), Path.GetFullPath(path));
+        return relative == "." ||
+            (!Path.IsPathRooted(relative) &&
+             !string.Equals(relative, "..", StringComparison.Ordinal) &&
+             !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) &&
+             !relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal));
+    }
+}
+
+internal static class PatternMatcher
+{
+    public static bool Matches(string pattern, string value)
+    {
+        Validate(pattern);
+        if (pattern == "*")
+        {
+            return true;
+        }
+
+        if (pattern.EndsWith('*'))
+        {
+            return value.StartsWith(pattern[..^1], StringComparison.OrdinalIgnoreCase);
+        }
+
+        return string.Equals(pattern, value, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static int Specificity(string pattern)
+    {
+        Validate(pattern);
+        return pattern == "*" ? 0 : pattern.EndsWith('*') ? pattern.Length - 1 : 1_000_000;
+    }
+
+    public static void Validate(string pattern)
+    {
+        if (string.IsNullOrWhiteSpace(pattern) || pattern.Count(character => character == '*') > 1 ||
+            (pattern.Contains('*') && !pattern.EndsWith('*')))
+        {
+            throw new AnalysisException("a package mapping or policy pattern is unsupported or invalid.");
+        }
+    }
+}
+
+internal static class TargetResolver
+{
+    private static readonly Regex SolutionProjectLine = new(
+        "^Project\\(.*\\)\\s*=\\s*\"[^\"]+\",\\s*\"(?<path>[^\"]+\\.csproj)\"",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    public static ProjectTarget Resolve(string? suppliedPath)
+    {
+        var input = suppliedPath is null ? Directory.GetCurrentDirectory() : suppliedPath;
+        string fullInput;
+        try
+        {
+            fullInput = Path.GetFullPath(input);
+        }
+        catch
+        {
+            throw new InvocationException("the supplied path is invalid.");
+        }
+
+        if (File.Exists(fullInput))
+        {
+            var extension = Path.GetExtension(fullInput);
+            if (extension.Equals(".sln", StringComparison.OrdinalIgnoreCase))
+            {
+                return ResolveSolution(fullInput);
+            }
+
+            if (extension.Equals(".csproj", StringComparison.OrdinalIgnoreCase))
+            {
+                return new(FindRepositoryRoot(Path.GetDirectoryName(fullInput)!), [fullInput]);
+            }
+
+            throw new InvocationException("the supplied path must identify a solution or project.");
+        }
+
+        if (!Directory.Exists(fullInput))
+        {
+            throw new InvocationException("the supplied solution or project could not be found.");
+        }
+
+        var solutions = Directory.EnumerateFiles(fullInput, "*.sln", SearchOption.TopDirectoryOnly).ToArray();
+        if (solutions.Length == 1)
+        {
+            return ResolveSolution(solutions[0]);
+        }
+
+        var projects = Directory.EnumerateFiles(fullInput, "*.csproj", SearchOption.AllDirectories)
+            .Where(path => !path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                .Any(part => part is "bin" or "obj"))
+            .ToArray();
+        return projects.Length switch
+        {
+            0 => throw new InvocationException("the current directory contains no solution or project."),
+            1 => new(FindRepositoryRoot(fullInput), projects),
+            _ => throw new InvocationException("the current directory contains multiple projects; supply one solution or project path.")
+        };
+    }
+
+    private static ProjectTarget ResolveSolution(string solutionPath)
+    {
+        var solutionDirectory = Path.GetDirectoryName(solutionPath)!;
+        var projects = File.ReadLines(solutionPath)
+            .Select(line => SolutionProjectLine.Match(line))
+            .Where(match => match.Success)
+            .Select(match => Path.GetFullPath(Path.Combine(solutionDirectory, match.Groups["path"].Value.Replace('\\', Path.DirectorySeparatorChar))))
+            .Where(File.Exists)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (projects.Length == 0)
+        {
+            throw new InvocationException("the supplied solution contains no readable projects.");
+        }
+
+        return new(FindRepositoryRoot(solutionDirectory), projects);
+    }
+
+    private static string FindRepositoryRoot(string start)
+    {
+        var directory = new DirectoryInfo(start);
+        while (directory is not null)
+        {
+            if (Directory.Exists(Path.Combine(directory.FullName, ".git")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        return Path.GetFullPath(start);
+    }
+}

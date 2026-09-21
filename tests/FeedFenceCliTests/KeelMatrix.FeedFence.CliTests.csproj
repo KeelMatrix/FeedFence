@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>KeelMatrix.FeedFence.CliTests</RootNamespace>
+    <AssemblyName>KeelMatrix.FeedFence.CliTests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/KeelMatrix.FeedFence/KeelMatrix.FeedFence.csproj" />
+  </ItemGroup>
+</Project>

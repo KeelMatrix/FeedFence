@@ -11,6 +11,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{31696D87
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KeelMatrix.FeedFence.Phase0Probe", "tests\Phase0Probe\KeelMatrix.FeedFence.Phase0Probe.csproj", "{5AE2CBEF-CD76-438D-8074-241851D5B672}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KeelMatrix.FeedFence.CliTests", "tests\FeedFenceCliTests\KeelMatrix.FeedFence.CliTests.csproj", "{4A6B4B9D-82D5-4AC1-B4D9-364F44CE6715}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -28,9 +30,14 @@ Global
 		{5AE2CBEF-CD76-438D-8074-241851D5B672}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{5AE2CBEF-CD76-438D-8074-241851D5B672}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{5AE2CBEF-CD76-438D-8074-241851D5B672}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4A6B4B9D-82D5-4AC1-B4D9-364F44CE6715}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4A6B4B9D-82D5-4AC1-B4D9-364F44CE6715}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4A6B4B9D-82D5-4AC1-B4D9-364F44CE6715}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4A6B4B9D-82D5-4AC1-B4D9-364F44CE6715}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{795C0F1D-310F-488B-A889-AAD74C579B1A} = {8E01CA86-DACE-4F0B-B466-5C5230F763CC}
 		{5AE2CBEF-CD76-438D-8074-241851D5B672} = {31696D87-5DC5-4DB9-A0B8-8D78D5892CF7}
+		{4A6B4B9D-82D5-4AC1-B4D9-364F44CE6715} = {31696D87-5DC5-4DB9-A0B8-8D78D5892CF7}
 	EndGlobalSection
 EndGlobal
