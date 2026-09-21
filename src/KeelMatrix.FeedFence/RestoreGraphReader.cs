@@ -49,6 +49,34 @@ internal static class RestoreGraphReader
             throw new AnalysisException("project.assets.json is incomplete; run restore first, then run FeedFence again.");
         }
 
+        EnsureCount(targets, InputLimits.MaxAssetTargetCount, "project.assets.json contains too many target frameworks.");
+        var targetLibraryNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var targetFrameworkCount = 0;
+        var targetLibraryCount = 0;
+        foreach (var target in targets.EnumerateObject())
+        {
+            targetFrameworkCount++;
+            if (targetFrameworkCount > InputLimits.MaxAssetFrameworkCount || target.Value.ValueKind != JsonValueKind.Object)
+            {
+                throw new AnalysisException("project.assets.json contains too many or invalid target frameworks.");
+            }
+
+            foreach (var targetLibrary in target.Value.EnumerateObject())
+            {
+                targetLibraryCount++;
+                if (targetLibraryCount > InputLimits.MaxAssetTargetLibraryCount)
+                {
+                    throw new AnalysisException("project.assets.json contains too many target library references.");
+                }
+
+                if (targetLibrary.Name.Contains('/'))
+                {
+                    targetLibraryNames.Add(targetLibrary.Name);
+                }
+            }
+        }
+
+        EnsureCount(libraries, InputLimits.MaxAssetLibraryCount, "project.assets.json contains too many libraries.");
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var library in libraries.EnumerateObject())
         {
@@ -65,7 +93,16 @@ internal static class RestoreGraphReader
                 throw new AnalysisException("project.assets.json contains an invalid package identity.");
             }
 
+            if (!targetLibraryNames.Contains(library.Name))
+            {
+                throw new AnalysisException("project.assets.json is incomplete; a package library is not present in any target framework.");
+            }
+
             result.Add(library.Name[..separator]);
+            if (result.Count > InputLimits.MaxResolvedPackageCount)
+            {
+                throw new AnalysisException("project.assets.json contains too many resolved packages.");
+            }
         }
 
         return result;
@@ -81,6 +118,7 @@ internal static class RestoreGraphReader
         }
 
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        EnsureCount(dependencies, InputLimits.MaxLockFrameworkCount, "packages.lock.json contains too many target frameworks.");
         foreach (var framework in dependencies.EnumerateObject())
         {
             if (framework.Value.ValueKind != JsonValueKind.Object)
@@ -90,6 +128,11 @@ internal static class RestoreGraphReader
 
             foreach (var package in framework.Value.EnumerateObject())
             {
+                if (result.Count >= InputLimits.MaxResolvedPackageCount)
+                {
+                    throw new AnalysisException("packages.lock.json contains too many resolved packages.");
+                }
+
                 if (package.Value.ValueKind == JsonValueKind.Object &&
                     package.Value.TryGetProperty("type", out var packageType) &&
                     string.Equals(packageType.GetString(), "Project", StringComparison.OrdinalIgnoreCase))
@@ -110,6 +153,18 @@ internal static class RestoreGraphReader
         }
 
         return result;
+    }
+
+    private static void EnsureCount(JsonElement element, int maximum, string message)
+    {
+        var count = 0;
+        foreach (var _ in element.EnumerateObject())
+        {
+            if (++count > maximum)
+            {
+                throw new AnalysisException(message);
+            }
+        }
     }
 
     private static JsonDocument ParseJson(string path, int MaxBytes, string kind)

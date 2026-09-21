@@ -29,6 +29,7 @@ Run the CLI contract tests, the host platform fixture, and the package gate:
 dotnet run --project tests/FeedFenceCliTests/KeelMatrix.FeedFence.CliTests.csproj -c Release --no-build
 pwsh ./scripts/Invoke-PlatformFixtures.ps1 -Configuration Release
 pwsh ./scripts/Invoke-PackGate.ps1 -Configuration Release
+pwsh ./scripts/Invoke-DependencyAudit.ps1
 ```
 
 ## Invariants

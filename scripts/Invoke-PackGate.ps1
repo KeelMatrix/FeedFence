@@ -51,13 +51,56 @@ function Assert-ConsumerResult($Result, [int]$ExpectedExitCode, [string]$Label) 
     }
 }
 
+function Assert-NoMachineLocalPdbPaths([string[]]$ArchivePaths) {
+    $machineAbsolutePathPattern = '(?i)(?<![A-Za-z0-9])(?:[A-Z]:[\\/]|\\\\[^\\/\r\n]+[\\/]|/(?:Users|home|private|tmp)/)'
+    $pdbCount = 0
+    foreach ($archivePath in $ArchivePaths) {
+        $archive = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
+        try {
+            foreach ($entry in @($archive.Entries | Where-Object { $_.FullName -match '(?i)\.pdb$' })) {
+                $pdbCount++
+                $memory = [System.IO.MemoryStream]::new()
+                try {
+                    $stream = $entry.Open()
+                    try { $stream.CopyTo($memory) } finally { $stream.Dispose() }
+                    $bytes = $memory.ToArray()
+                    $texts = @(
+                        [System.Text.Encoding]::UTF8.GetString($bytes),
+                        [System.Text.Encoding]::Unicode.GetString($bytes)
+                    )
+                    if ($texts | Where-Object { $_ -match $machineAbsolutePathPattern }) {
+                        throw "Symbol/PDB privacy check failed for $($entry.FullName) in $(Split-Path -Leaf $archivePath): machine-local absolute path detected."
+                    }
+                }
+                finally {
+                    $memory.Dispose()
+                }
+            }
+        }
+        finally {
+            $archive.Dispose()
+        }
+    }
+
+    if ($pdbCount -eq 0) {
+        throw 'Symbol/PDB privacy check found no PDB entries to inspect.'
+    }
+
+    Write-Output "Symbol/PDB path privacy: PASS (inspected $pdbCount PDB entries across package and symbols artifacts; no machine-local absolute paths found)."
+}
+
 function New-ConsumerFixture([string]$Root, [string]$Name, [string[]]$SourceKeys) {
     $fixtureRoot = Join-Path $Root $Name
     $projectDirectory = Join-Path $fixtureRoot 'project'
     New-Item -ItemType Directory -Force -Path (Join-Path $projectDirectory 'obj') | Out-Null
     $projectPath = Join-Path $projectDirectory 'Fixture.csproj'
     Set-Content -LiteralPath $projectPath -Encoding utf8 -Value '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>'
-    Set-Content -LiteralPath (Join-Path $projectDirectory 'obj\project.assets.json') -Encoding utf8 -Value '{"version":3,"targets":{"net8.0":{}},"libraries":{"Fixture.Package/1.0.0":{"type":"package"}}}'
+    $assets = @{
+        version = 3
+        targets = @{ 'net8.0' = @{ 'Fixture.Package/1.0.0' = @{} } }
+        libraries = @{ 'Fixture.Package/1.0.0' = @{ type = 'package' } }
+    } | ConvertTo-Json -Depth 8 -Compress
+    Set-Content -LiteralPath (Join-Path $projectDirectory 'obj\project.assets.json') -Encoding utf8 -Value $assets
 
     $sources = foreach ($sourceKey in $SourceKeys) {
         $sourceDirectory = Join-Path $fixtureRoot (Join-Path 'feeds' $sourceKey)
@@ -139,11 +182,14 @@ try {
         if ($nuspec -match '<dependencies') {
             throw 'Shipping tool must remain self-contained and must not declare an unallowlisted nuspec dependency.'
         }
-        Write-Output 'Package content contract: README, LICENSE, founder-provided icon, embedded runtime set, and exclusion checks passed.'
+        Write-Output 'Package content contract: README, LICENSE, package icon, embedded runtime set, and exclusion checks passed.'
     }
     finally {
         $archive.Dispose()
     }
+
+    $snupkgPath = Join-Path $shippingOutput 'KeelMatrix.FeedFence.0.1.0.snupkg'
+    Assert-NoMachineLocalPdbPaths @($nupkgPath, $snupkgPath)
 
     $consumerRoot = Join-Path $outputRoot 'consumer'
     $localSource = Join-Path $consumerRoot 'local-source'

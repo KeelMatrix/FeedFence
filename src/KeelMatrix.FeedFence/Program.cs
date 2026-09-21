@@ -250,4 +250,10 @@ internal static class InputLimits
     public const int MaxConfigBytes = 2 * 1024 * 1024;
     public const int MaxXmlDepth = 64;
     public const int MaxXmlElements = 100_000;
+    public const int MaxAssetTargetCount = 256;
+    public const int MaxAssetFrameworkCount = 256;
+    public const int MaxAssetLibraryCount = 50_000;
+    public const int MaxAssetTargetLibraryCount = 100_000;
+    public const int MaxLockFrameworkCount = 256;
+    public const int MaxResolvedPackageCount = 50_000;
 }

@@ -141,6 +141,48 @@ internal sealed class Fixture : IDisposable
         AssertNotContains(insecureOutput.Output, "secret");
         AssertNotContains(insecureOutput.Output, "token=private");
 
+        var paddedHttp = CreateCase("padded-http", ["Feed.Http"], [], ["http"], "  http://example.invalid/v3/index.json  ");
+        var paddedHttpResult = Run("check", paddedHttp.Project, "--config", paddedHttp.Config);
+        AssertEqual(1, paddedHttpResult.ExitCode, "whitespace-padded HTTP source exit code");
+        AssertContains(paddedHttpResult.Output, "FF006");
+
+        var restoreCrossCheckRoot = Path.Combine(_root, "padded-http-restore");
+        var restoreCrossCheckProjectDirectory = Path.Combine(restoreCrossCheckRoot, "project");
+        Directory.CreateDirectory(restoreCrossCheckProjectDirectory);
+        var restoreCrossCheckProject = Path.Combine(restoreCrossCheckProjectDirectory, "Project.csproj");
+        File.WriteAllText(
+            restoreCrossCheckProject,
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include=\"FeedFence.HttpCrossCheck\" Version=\"1.0.0\" /></ItemGroup></Project>",
+            Encoding.UTF8);
+        var restoreCrossCheckConfig = Path.Combine(restoreCrossCheckRoot, "NuGet.config");
+        File.WriteAllText(
+            restoreCrossCheckConfig,
+            "<configuration><packageSources><clear /><add key=\"http\" value=\"  http://127.0.0.1:1/v3/index.json  \" /></packageSources></configuration>",
+            Encoding.UTF8);
+        var restoreCrossCheck = RunExternal(
+            "dotnet",
+            "restore",
+            restoreCrossCheckProject,
+            "--configfile",
+            restoreCrossCheckConfig,
+            "--no-cache",
+            "--disable-parallel");
+        AssertEqual(false, restoreCrossCheck.ExitCode == 0, "NuGet padded HTTP restore rejection");
+        AssertContains(restoreCrossCheck.Output, "NU1302");
+
+        var sensitiveSourceKey = "https://user:password@example.invalid/nuget/index.json?token=topsecret";
+        var sensitiveSource = CreateCase("sensitive-source-key", ["Feed.Secret"], [], [sensitiveSourceKey, "safe"], "https://feed.example.invalid/index.json");
+        foreach (var format in new[] { "text", "json", "sarif" })
+        {
+            var sensitiveResult = Run("check", sensitiveSource.Project, "--config", sensitiveSource.Config, "--format", format);
+            AssertContains(sensitiveResult.Output, "source-");
+            AssertNotContains(sensitiveResult.Output, "https://user:password@example.invalid/nuget/index.json?token=topsecret");
+            AssertNotContains(sensitiveResult.Output, "user");
+            AssertNotContains(sensitiveResult.Output, "password");
+            AssertNotContains(sensitiveResult.Output, "example.invalid");
+            AssertNotContains(sensitiveResult.Output, "topsecret");
+        }
+
         var protectedCase = CreateCase("protected", ["Company.Internal"], [], ["public"]);
         var policy = Path.Combine(protectedCase.Root, "feedfence.json");
         File.WriteAllText(policy, "{\"version\":1,\"sourceTrust\":{\"public\":\"public\"},\"privatePackages\":[\"Company.*\"]}", Encoding.UTF8);
@@ -185,20 +227,59 @@ internal sealed class Fixture : IDisposable
         var dtdResult = Run("check", specificity.Project, "--config", dtdConfig);
         AssertEqual(2, dtdResult.ExitCode, "DTD configuration exit code");
         AssertNotContains(dtdResult.Output, "not-used");
+
+        var incompleteAssets = CreateCase("incomplete-assets", ["Feed.Incomplete"], [], ["one"], coherentTargets: false);
+        var incompleteAssetsResult = Run("check", incompleteAssets.Project, "--config", incompleteAssets.Config);
+        AssertEqual(2, incompleteAssetsResult.ExitCode, "incomplete assets graph exit code");
+        AssertContains(incompleteAssetsResult.Output, "package library is not present in any target framework");
+
+        var zeroSources = CreateCase("zero-sources", ["Feed.NoSource"], [], []);
+        var zeroSourcesResult = Run("check", zeroSources.Project, "--config", zeroSources.Config);
+        AssertEqual(2, zeroSourcesResult.ExitCode, "zero-source nonempty graph exit code");
+        AssertContains(zeroSourcesResult.Output, "no active package sources");
+
+        var symlinkCase = CreateCase("symlink-config", ["Feed.Symlink"], [], ["one"]);
+        var symlinkTarget = Path.Combine(_root, "symlink-target.config");
+        File.Copy(symlinkCase.Config, symlinkTarget);
+        var symlinkConfig = Path.Combine(Path.GetDirectoryName(symlinkCase.Project)!, "NuGet.config");
+        File.CreateSymbolicLink(symlinkConfig, symlinkTarget);
+        var symlinkResult = Run("check", symlinkCase.Project, "--config", symlinkConfig, "--format", "json");
+        AssertEqual(0, symlinkResult.ExitCode, "symlink provenance non-strict exit code");
+        AssertContains(symlinkResult.Output, "external inherited configuration");
+        using (var symlinkDocument = JsonDocument.Parse(symlinkResult.StandardOutput))
+        {
+            AssertEqual(false, symlinkDocument.RootElement.GetProperty("sources")[0].GetProperty("repositoryControlled").GetBoolean(), "symlink provenance repository control");
+        }
+
+        var highCardinalityPackages = Enumerable.Range(0, 50_001).Select(index => $"Feed.Package{index:00000}").ToArray();
+        var highCardinality = CreateCase("high-cardinality", highCardinalityPackages, [], ["one"]);
+        var highCardinalityResult = Run("check", highCardinality.Project, "--config", highCardinality.Config);
+        AssertEqual(2, highCardinalityResult.ExitCode, "high-cardinality assets exit code");
+        AssertContains(highCardinalityResult.Output, "too many libraries");
     }
 
-    private TestCase CreateCase(string name, IReadOnlyList<string> packages, IReadOnlyList<string> mappings, IReadOnlyList<string> sourceKeys, string? firstSource = null)
+    private TestCase CreateCase(
+        string name,
+        IReadOnlyList<string> packages,
+        IReadOnlyList<string> mappings,
+        IReadOnlyList<string> sourceKeys,
+        string? firstSource = null,
+        bool coherentTargets = true)
     {
         var root = Path.Combine(_root, name);
         var projectDirectory = Path.Combine(root, "project");
         Directory.CreateDirectory(Path.Combine(projectDirectory, "obj"));
         var project = Path.Combine(projectDirectory, "Project.csproj");
         File.WriteAllText(project, "<Project />", Encoding.UTF8);
-        var assets = new
+        var libraries = packages.ToDictionary(package => package + "/1.0.0", package => (object)new { type = "package" });
+        var targetLibraries = packages.ToDictionary(package => package + "/1.0.0", package => (object)new { });
+        var assets = new Dictionary<string, object>
         {
-            version = 3,
-            targets = new { net8 = new { } },
-            libraries = packages.ToDictionary(package => package + "/1.0.0", package => new { type = "package" })
+            ["version"] = 3,
+            ["targets"] = coherentTargets
+                ? new Dictionary<string, object> { ["net8.0"] = targetLibraries }
+                : new Dictionary<string, object>(),
+            ["libraries"] = libraries
         };
         File.WriteAllText(Path.Combine(projectDirectory, "obj", "project.assets.json"), JsonSerializer.Serialize(assets), Encoding.UTF8);
 
@@ -238,10 +319,39 @@ internal sealed class Fixture : IDisposable
         return new(process.ExitCode, output.Result, error.Result);
     }
 
+    private ProcessResult RunExternal(string fileName, params string[] args)
+    {
+        var startInfo = new ProcessStartInfo(fileName)
+        {
+            WorkingDirectory = _root,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        startInfo.Environment["KEELMATRIX_NO_TELEMETRY"] = "1";
+        startInfo.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
+        startInfo.Environment["NUGET_PACKAGES"] = Path.Combine(_root, "restore-cross-check-packages");
+        startInfo.Environment["DOTNET_CLI_HOME"] = Path.Combine(_root, "restore-cross-check-home");
+        foreach (var arg in args)
+        {
+            startInfo.ArgumentList.Add(arg);
+        }
+
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException($"could not start {fileName}.");
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        process.WaitForExit();
+        return new(process.ExitCode, output.Result, error.Result);
+    }
+
     private void AssertProcess(int expectedExitCode, params string[] args)
     {
         var result = Run(args);
-        AssertEqual(expectedExitCode, result.ExitCode, string.Join(' ', args));
+        if (result.ExitCode != expectedExitCode)
+        {
+            throw new InvalidOperationException($"{string.Join(' ', args)}: expected '{expectedExitCode}', actual '{result.ExitCode}'. stderr: {result.StandardError.Trim()} stdout: {result.StandardOutput.Trim()}");
+        }
     }
 
     private static void AssertEqual<T>(T expected, T actual, string name)

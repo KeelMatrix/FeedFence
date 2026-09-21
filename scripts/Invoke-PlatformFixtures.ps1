@@ -54,7 +54,12 @@ try {
 
     $projectPath = Join-Path $projectDirectory 'Fixture.csproj'
     Set-Content -LiteralPath $projectPath -Encoding utf8 -Value '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>'
-    Set-Content -LiteralPath (Join-Path $projectDirectory 'obj\project.assets.json') -Encoding utf8 -Value '{"version":3,"targets":{"net8.0":{}},"libraries":{"Fixture.Package/1.0.0":{"type":"package"}}}'
+    $assets = @{
+        version = 3
+        targets = @{ 'net8.0' = @{ 'Fixture.Package/1.0.0' = @{} } }
+        libraries = @{ 'Fixture.Package/1.0.0' = @{ type = 'package' } }
+    } | ConvertTo-Json -Depth 8 -Compress
+    Set-Content -LiteralPath (Join-Path $projectDirectory 'obj\project.assets.json') -Encoding utf8 -Value $assets
     $fileUri = [Uri]::new($feedDirectory).AbsoluteUri
     Set-Content -LiteralPath $configPath -Encoding utf8 -Value "<configuration><packageSources><clear /><add key='LocalFeed' value='$fileUri' /></packageSources><packageSourceMapping><packageSource key='LocalFeed'><package pattern='Fixture.*' /></packageSource></packageSourceMapping></configuration>"
 

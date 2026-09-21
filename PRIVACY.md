@@ -1,12 +1,15 @@
 # Privacy
 
+The shared telemetry client contract is maintained in the [KeelMatrix.Telemetry privacy policy](https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md), which is the source of truth for shared delivery, retention, identifiers, and opt-out behavior.
+
 The Phase 0 feasibility probe is local-only and does not send telemetry or
 contact package feeds. Its synthetic fixtures contain no customer data,
 credentials, or private package URLs.
 
-The FeedFence analysis contract is intentionally offline. Diagnostics use source
-keys and bounded configuration labels rather than credentials, authenticated
-URLs, full local paths, or package contents.
+The FeedFence analysis contract is intentionally offline. Diagnostics use safe
+source labels and bounded configuration labels; sensitive source keys become
+stable opaque labels rather than exposing credentials, authenticated URLs, full
+local paths, or package contents.
 
 After a completed analysis with at least one resolved package and one effective
 source-policy evaluation, the tool may request one activation through the

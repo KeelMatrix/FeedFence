@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml;
@@ -13,6 +15,11 @@ internal sealed class FeedFenceAnalyzer
         var configuration = EffectiveConfig.Load(target.RepositoryRoot, options.ConfigPath);
         var policy = FeedFencePolicy.Load(target.RepositoryRoot, options.PolicyPath);
         var packageIds = RestoreGraphReader.ReadFromProjects(target.ProjectPaths);
+        if (packageIds.Count > 0 && configuration.ActiveSources.Count == 0)
+        {
+            throw new AnalysisException("the restored package graph is non-empty but the effective NuGet configuration has no active package sources; restore artifacts are incomplete.");
+        }
+
         var diagnostics = new List<Diagnostic>();
 
         foreach (var source in configuration.Sources.Where(source => source.IsEnabled))
@@ -25,11 +32,11 @@ internal sealed class FeedFenceAnalyzer
                     new Diagnostic(
                         "FF005",
                         options.Strict ? DiagnosticSeverity.Violation : DiagnosticSeverity.Warning,
-                        $"Active source key \"{source.Key}\" is inherited from {source.Provenance}; configuration provenance is not repository-controlled.",
+                        $"Active source key \"{RedactLabel(source.Key)}\" is inherited from {source.Provenance}; configuration provenance is not repository-controlled.",
                         SourceKeys: [source.Key]));
             }
 
-            if (source.Value.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+            if (IsInsecureHttpSource(source.Value))
             {
                 AddDiagnostic(
                     diagnostics,
@@ -37,7 +44,7 @@ internal sealed class FeedFenceAnalyzer
                     new Diagnostic(
                         "FF006",
                         DiagnosticSeverity.Violation,
-                        $"Source key \"{source.Key}\" uses an insecure HTTP source; use HTTPS or a documented local exception.",
+                        $"Source key \"{RedactLabel(source.Key)}\" uses an insecure HTTP source; use HTTPS or a documented local exception.",
                         SourceKeys: [source.Key]));
             }
         }
@@ -69,7 +76,7 @@ internal sealed class FeedFenceAnalyzer
                     new Diagnostic(
                         "FF004",
                         DiagnosticSeverity.Violation,
-                        $"Mapping source key \"{mapping.SourceKey}\" does not match a configured source key exactly.{suffix}",
+                        $"Mapping source key \"{RedactLabel(mapping.SourceKey)}\" does not match a configured source key exactly.{suffix}",
                         SourceKeys: [mapping.SourceKey]));
             }
         }
@@ -199,8 +206,65 @@ internal sealed class FeedFenceAnalyzer
     private static string FormatPatterns(IEnumerable<string> patterns) =>
         string.Join(", ", patterns.Select(pattern => $"\"{RedactLabel(pattern)}\"").Order(StringComparer.Ordinal));
 
-    internal static string RedactLabel(string value) =>
-        new(value.Where(character => !char.IsControl(character)).ToArray());
+    private static bool IsInsecureHttpSource(string value)
+    {
+        var normalized = value.Trim();
+        return normalized.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            (Uri.TryCreate(normalized, UriKind.Absolute, out var uri) &&
+             string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase));
+    }
+
+    internal static string RedactLabel(string value)
+    {
+        var normalized = new string(value.Where(character => !char.IsControl(character)).ToArray()).Trim();
+        if (normalized.Length == 0)
+        {
+            return "source";
+        }
+
+        if (IsSafeLabel(normalized))
+        {
+            return normalized;
+        }
+
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized))).ToLowerInvariant();
+        return $"source-{hash[..12]}";
+    }
+
+    private static bool IsSafeLabel(string value)
+    {
+        if (value.Length > 128 ||
+            value.Contains('/') ||
+            value.Contains('\\') ||
+            value.Contains('?') ||
+            value.Contains('#') ||
+            value.Contains('@') ||
+            Uri.TryCreate(value, UriKind.Absolute, out _))
+        {
+            return false;
+        }
+
+        var sensitiveRoots = new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            Path.GetTempPath()
+        };
+        if (sensitiveRoots.Any(root => !string.IsNullOrWhiteSpace(root) &&
+            value.Contains(root, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(Environment.UserName) &&
+            value.Contains(Environment.UserName, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return value.All(character => char.IsLetterOrDigit(character) || character is '.' or '_' or '-');
+    }
 }
 
 internal sealed class EffectiveConfig
@@ -268,7 +332,7 @@ internal sealed class EffectiveConfig
                     var configOrigin = sourceItem?.ConfigPath ?? string.Empty;
                     var provenance = Provenance.Classify(configOrigin, repositoryRoot);
                     return new SourceInfo(
-                        FeedFenceAnalyzer.RedactLabel(source.Name),
+                        source.Name,
                         source.Source,
                         source.IsEnabled,
                         provenance.Label,
@@ -433,20 +497,20 @@ internal static class Provenance
             return ("unknown inherited configuration", false);
         }
 
-        var fullConfigPath = Path.GetFullPath(configPath);
-        if (IsWithinDirectory(fullConfigPath, repositoryRoot))
+        var fullConfigPath = ResolvePhysicalPath(configPath);
+        if (IsWithinDirectory(fullConfigPath, ResolvePhysicalPath(repositoryRoot)))
         {
             return ("repository-controlled configuration", true);
         }
 
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        if (!string.IsNullOrWhiteSpace(appData) && IsWithinDirectory(fullConfigPath, appData))
+        if (!string.IsNullOrWhiteSpace(appData) && IsWithinDirectory(fullConfigPath, ResolvePhysicalPath(appData)))
         {
             return ("user-inherited configuration", false);
         }
 
         var commonData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
-        if (!string.IsNullOrWhiteSpace(commonData) && IsWithinDirectory(fullConfigPath, commonData))
+        if (!string.IsNullOrWhiteSpace(commonData) && IsWithinDirectory(fullConfigPath, ResolvePhysicalPath(commonData)))
         {
             return ("machine-inherited configuration", false);
         }
@@ -462,6 +526,35 @@ internal static class Provenance
              !string.Equals(relative, "..", StringComparison.Ordinal) &&
              !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) &&
              !relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal));
+    }
+
+    private static string ResolvePhysicalPath(string path)
+    {
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            var file = new FileInfo(fullPath);
+            var fileTarget = file.ResolveLinkTarget(returnFinalTarget: true);
+            if (fileTarget is not null)
+            {
+                return Path.GetFullPath(fileTarget.FullName);
+            }
+
+            var parent = file.Directory;
+            if (parent is null)
+            {
+                return fullPath;
+            }
+
+            var parentTarget = parent.ResolveLinkTarget(returnFinalTarget: true);
+            return parentTarget is null
+                ? fullPath
+                : Path.Combine(Path.GetFullPath(parentTarget.FullName), file.Name);
+        }
+        catch
+        {
+            return Path.GetFullPath(path);
+        }
     }
 }
 

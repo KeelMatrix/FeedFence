@@ -29,11 +29,13 @@ Use `--config <path>` to replace NuGet hierarchy discovery, `--policy <path>` fo
 
 Exit codes: `0` means analysis and policy passed, `1` means one or more policy violations, and `2` means invocation, environment, or analysis failure.
 
-Diagnostics are stable from `FF001` through `FF008`. Exact package IDs, prefix patterns, wildcard patterns, and equal-specificity outcomes follow NuGet Package Source Mapping semantics. Reports use source keys and normalized provenance labels; credentials, authenticated URLs, query strings, usernames, and full local paths are never printed. `FF008` is informational only.
+Diagnostics are stable from `FF001` through `FF008`. Exact package IDs, prefix patterns, wildcard patterns, and equal-specificity outcomes follow NuGet Package Source Mapping semantics. Reports use safe source labels and normalized provenance labels; sensitive source keys are represented by stable opaque labels. Credentials, authenticated URLs, query strings, usernames, and full local paths are never printed. `FF008` is informational only.
 
 The optional repository-root `feedfence.json` supports source trust labels, protected/private package patterns, and narrow exceptions. Every exception must include a target and a non-empty reason. See the repository README for the complete policy schema and limitations.
 
 The tool targets `net8.0`, has no supported in-process API in v1, and makes no analysis-time network or credential-provider calls. Package Source Mapping limits package downloads, not every NuGet metadata query; `FF008` is informational only.
+
+Configuration and restore inputs are bounded. Assets graphs accept at most 50,000 libraries/resolved packages, 256 target frameworks, and 100,000 target-library references; incomplete or impossible nonempty graphs fail closed with exit code `2`.
 
 NuGet configuration is hierarchical and `<clear />` resets a collection. Exact
 mapping IDs beat the longest prefix, which beats `*`; equal winners produce
