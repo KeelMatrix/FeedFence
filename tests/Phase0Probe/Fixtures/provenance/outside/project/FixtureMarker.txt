@@ -1,0 +1,1 @@
+This project is outside any repository NuGet.Config.

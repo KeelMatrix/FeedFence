@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using System.Xml.Linq;
 using NuGet.Configuration;
 
 namespace KeelMatrix.FeedFence.Phase0Probe;
@@ -59,6 +60,8 @@ internal sealed class ProbeRunner
             RunNoMappingCase(runRoot);
             RunCasingCase(runRoot);
             RunExplicitConfigCase(runRoot);
+            RunProvenanceCases(runRoot);
+            RunParseSafetyCases(runRoot);
 
             AssertTemplateCorpusUnchanged(templateRoot);
 
@@ -82,8 +85,9 @@ internal sealed class ProbeRunner
             }
 
             Console.WriteLine();
-            Console.WriteLine("PASS (go): official NuGet APIs reproduce effective source and mapping values, and source-item ConfigPath distinguishes repository, user, and machine origins for FF005.");
+            Console.WriteLine("PASS (go): official NuGet APIs reproduce effective source and mapping values, independent restore markers prove eligible source outcomes, and source-item ConfigPath distinguishes repository, user, machine, and external origins for FF005.");
             Console.WriteLine("Provenance scope: classify only package-source declarations returned by NuGet by their official ConfigPath; do not re-merge settings or reimplement pattern matching.");
+            Console.WriteLine("Read-only note: NuGet 7.9.0 can materialize a missing user NuGet.Config while loading default settings; the probe contains that side effect only inside its disposable run directory.");
             return 0;
         }
         finally
@@ -255,16 +259,168 @@ internal sealed class ProbeRunner
         Assert($"{name} restore outcome", actualSuccess == expectSuccess);
 
         var resolvedIds = actualSuccess ? ReadResolvedPackageIds(Path.Combine(repositoryRoot, "obj", "project.assets.json")) : [];
+        var selectedMarker = actualSuccess ? ReadPackageMarker(packageRoot) : null;
         if (actualSuccess)
         {
             Assert($"{name} restored package is present", resolvedIds.Contains(packageId, StringComparer.OrdinalIgnoreCase));
+            Assert($"{name} selected source marker is eligible", selectedMarker is not null && expectedCandidates.Contains(selectedMarker, StringComparer.OrdinalIgnoreCase));
         }
 
-        Console.WriteLine($"Restore case: {name}; package={packageId}; derived=[{string.Join(", ", candidates)}]; actual={(actualSuccess ? "success" : "failure")}; duration={restore.DurationMs} ms");
+        var actualEligible = ProbeActualEligibleSources(runRoot, name, repositoryRoot, packageId, effective, expectedCandidates, configPath);
+        AssertSet($"{name} actual eligible sources", actualEligible, expectedCandidates);
+        RunDisabledSourceControls(runRoot, name, repositoryRoot, packageId, effective, expectedCandidates, configPath);
+
+        Console.WriteLine($"Restore case: {name}; package={packageId}; derived=[{string.Join(", ", candidates)}]; actual={(actualSuccess ? "success" : "failure")}; marker={selectedMarker ?? "none"}; actualEligible=[{string.Join(", ", actualEligible)}]; duration={restore.DurationMs} ms");
         if (!string.IsNullOrWhiteSpace(restore.Output))
         {
             Console.WriteLine($"  output: {restore.Output}");
         }
+    }
+
+    private string[] ProbeActualEligibleSources(
+        string runRoot,
+        string name,
+        string repositoryRoot,
+        string packageId,
+        EffectiveConfig effective,
+        IReadOnlyCollection<string> expectedCandidates,
+        string? configPath)
+    {
+        var activeSources = effective.Sources.Where(source => source.IsEnabled).ToList();
+        var actualEligible = new List<string>();
+        foreach (var source in activeSources)
+        {
+            var disabledSources = activeSources
+                .Where(candidate => !string.Equals(candidate.Name, source.Name, StringComparison.Ordinal))
+                .Select(candidate => candidate.Name)
+                .ToArray();
+            var control = RunControlledRestore(
+                runRoot,
+                $"{name} only {source.Name}",
+                repositoryRoot,
+                packageId,
+                configPath,
+                activeSources,
+                disabledSources,
+                runRoot);
+
+            if (control.Success && string.Equals(control.Marker, source.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                actualEligible.Add(source.Name);
+            }
+
+            var shouldSucceed = expectedCandidates.Contains(source.Name, StringComparer.Ordinal);
+            Assert(
+                $"{name} isolated {source.Name} outcome",
+                control.Success == shouldSucceed && (!control.Success || string.Equals(control.Marker, source.Name, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        return actualEligible.Order(StringComparer.Ordinal).ToArray();
+    }
+
+    private void RunDisabledSourceControls(
+        string runRoot,
+        string name,
+        string repositoryRoot,
+        string packageId,
+        EffectiveConfig effective,
+        IReadOnlyCollection<string> expectedCandidates,
+        string? configPath)
+    {
+        foreach (var sourceName in expectedCandidates.Order(StringComparer.Ordinal))
+        {
+            var control = RunControlledRestore(
+                runRoot,
+                $"{name} with {sourceName} disabled",
+                repositoryRoot,
+                packageId,
+                configPath,
+                effective.Sources.Where(source => source.IsEnabled).ToList(),
+                [sourceName],
+                runRoot);
+            var shouldSucceed = expectedCandidates.Count > 1;
+            Assert(
+                $"{name} one-feed-disabled {sourceName} outcome",
+                control.Success == shouldSucceed && (!control.Success || !string.Equals(control.Marker, sourceName, StringComparison.OrdinalIgnoreCase)));
+            Console.WriteLine($"  one-feed-disabled: {sourceName}; actual={(control.Success ? "success" : "failure")}; marker={control.Marker ?? "none"}");
+        }
+    }
+
+    private static ControlledRestoreResult RunControlledRestore(
+        string runRoot,
+        string name,
+        string repositoryRoot,
+        string packageId,
+        string? configPath,
+        IReadOnlyCollection<SourceObservation> activeSources,
+        IReadOnlyCollection<string> disabledSources,
+        string displayRoot)
+    {
+        var controlRoot = Path.Combine(runRoot, "controls", Sanitize(name) + "-" + Guid.NewGuid().ToString("N"));
+        CopyDirectory(repositoryRoot, controlRoot);
+        TryDelete(Path.Combine(controlRoot, "obj"));
+        TryDelete(Path.Combine(controlRoot, "bin"));
+
+        var controlledConfigPath = configPath is null
+            ? Path.Combine(controlRoot, "NuGet.Config")
+            : MapCopiedPath(repositoryRoot, controlRoot, configPath);
+        RewritePackageSources(
+            controlledConfigPath,
+            activeSources.Where(source => !disabledSources.Contains(source.Name, StringComparer.Ordinal)).ToArray());
+
+        var projectPath = Path.Combine(controlRoot, "ProbeProject.csproj");
+        WriteRestoreProject(projectPath, packageId);
+        var packageRoot = Path.Combine(runRoot, "packages", "control-" + Sanitize(name) + "-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(packageRoot);
+        var restore = RunRestore(
+            projectPath,
+            controlRoot,
+            packageRoot,
+            configPath is null ? null : controlledConfigPath,
+            displayRoot);
+        var success = restore.ExitCode == 0 && File.Exists(Path.Combine(controlRoot, "obj", "project.assets.json"));
+        var marker = success ? ReadPackageMarker(packageRoot) : null;
+        Console.WriteLine($"  isolated control: {name}; disabled=[{string.Join(", ", disabledSources.Order(StringComparer.Ordinal))}]; actual={(success ? "success" : "failure")}; marker={marker ?? "none"}");
+        if (!success && !string.IsNullOrWhiteSpace(restore.Output))
+        {
+            Console.WriteLine($"    control output: {restore.Output}");
+        }
+        TryDelete(controlRoot);
+        return new ControlledRestoreResult(success, marker);
+    }
+
+    private static string MapCopiedPath(string sourceRoot, string destinationRoot, string path)
+    {
+        var relative = Path.GetRelativePath(sourceRoot, path);
+        if (Path.IsPathRooted(relative) || relative == ".." || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) || relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            var destination = Path.Combine(destinationRoot, "controlled.config");
+            File.Copy(path, destination, overwrite: true);
+            return destination;
+        }
+
+        return Path.Combine(destinationRoot, relative);
+    }
+
+    private static void RewritePackageSources(string configPath, IReadOnlyCollection<SourceObservation> allowedSources)
+    {
+        var document = XDocument.Load(configPath, LoadOptions.PreserveWhitespace);
+        var configuration = document.Root ?? throw new InvalidOperationException($"Missing configuration root in {configPath}.");
+        var section = configuration.Element("packageSources");
+        if (section is null)
+        {
+            section = new XElement("packageSources");
+            configuration.Add(section);
+        }
+
+        section.RemoveNodes();
+        section.Add(new XElement("clear"));
+        foreach (var source in allowedSources)
+        {
+            section.Add(new XElement("add", new XAttribute("key", source.Name), new XAttribute("value", source.Source)));
+        }
+
+        document.Save(configPath, SaveOptions.DisableFormatting);
     }
 
     private static RestoreResult RunRestore(string projectPath, string workingDirectory, string packageRoot, string? configPath, string runRoot)
@@ -336,22 +492,129 @@ internal sealed class ProbeRunner
         var fullPath = Path.GetFullPath(configPath);
         var machinePath = Path.GetFullPath(Path.Combine(_runRoot, "machine-common", "NuGet", "Config"));
         var userPath = Path.GetFullPath(Path.Combine(_runRoot, "user-appdata", "NuGet"));
-        if (fullPath.StartsWith(Path.GetFullPath(repositoryRoot), StringComparison.OrdinalIgnoreCase))
+        if (IsWithinDirectory(fullPath, repositoryRoot))
         {
             return "repository";
         }
 
-        if (fullPath.StartsWith(machinePath, StringComparison.OrdinalIgnoreCase))
+        if (IsWithinDirectory(fullPath, machinePath))
         {
             return "machine";
         }
 
-        if (fullPath.StartsWith(userPath, StringComparison.OrdinalIgnoreCase))
+        if (IsWithinDirectory(fullPath, userPath))
         {
             return "user";
         }
 
         return "external";
+    }
+
+    private static bool IsWithinDirectory(string path, string directory)
+    {
+        var relative = Path.GetRelativePath(Path.GetFullPath(directory), Path.GetFullPath(path));
+        return relative == "." ||
+            (!Path.IsPathRooted(relative) &&
+             !string.Equals(relative, "..", StringComparison.Ordinal) &&
+             !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) &&
+             !relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal));
+    }
+
+    private void RunProvenanceCases(string runRoot)
+    {
+        var nestedRepositoryRoot = Path.Combine(runRoot, "provenance", "nested", "repository");
+        var nestedProjectRoot = Path.Combine(nestedRepositoryRoot, "src", "NestedProject");
+        var nestedSettings = LoadHierarchySettings(nestedProjectRoot, runRoot);
+        var nestedEffective = Describe(nestedSettings, nestedRepositoryRoot);
+        var nestedSource = nestedEffective.Sources.Single(source => source.Name == "NestedRepository");
+        Assert("FF005 nested project repository source is classified as repository", nestedSource.Scope == "repository");
+        Console.WriteLine($"FF005 provenance case: nested project; source={nestedSource.Name}; scope={nestedSource.Scope}");
+
+        var userConfig = Path.Combine(runRoot, "user-appdata", "NuGet", "NuGet.Config");
+        if (File.Exists(userConfig))
+        {
+            File.Delete(userConfig);
+        }
+
+        var missingUserRoot = Path.Combine(runRoot, "provenance", "missing-user", "project");
+        var missingUserSettings = LoadHierarchySettings(missingUserRoot, runRoot);
+        var missingUserEffective = Describe(missingUserSettings, missingUserRoot);
+        var userMaterialized = File.Exists(userConfig);
+        Assert("FF005 missing user config is materialized by NuGet settings load", userMaterialized);
+        Assert("FF005 materialized user source is classified as user", missingUserEffective.Sources.Any(source => source.Scope == "user"));
+        Console.WriteLine($"FF005 provenance case: missing user config; materialized={(userMaterialized ? "yes" : "no")}; userSources={string.Join(", ", missingUserEffective.Sources.Where(source => source.Scope == "user").Select(source => source.Name))}");
+
+        File.Copy(Path.Combine(runRoot, "hierarchy", "user", "NuGet.Config"), userConfig, overwrite: true);
+
+        var outsideRoot = Path.Combine(runRoot, "provenance", "outside", "project");
+        var outsideSettings = LoadHierarchySettings(outsideRoot, runRoot);
+        var outsideEffective = Describe(outsideSettings, outsideRoot);
+        Assert("FF005 outside project has no repository-controlled source", outsideEffective.Sources.All(source => source.Scope != "repository"));
+        Assert("FF005 outside project inherited source is visible", outsideEffective.Sources.Any(source => source.Scope is "machine" or "user"));
+        Console.WriteLine($"FF005 provenance case: outside repository config; scopes=[{string.Join(", ", outsideEffective.Sources.Select(source => $"{source.Name}:{source.Scope}"))}]");
+
+        var explicitRepositoryRoot = Path.Combine(runRoot, "provenance", "explicit-override", "repository");
+        var explicitOverridePath = Path.Combine(runRoot, "provenance", "explicit-override", "override", "NuGet.Config");
+        var explicitOverrideSettings = Settings.LoadSettingsGivenConfigPaths([explicitOverridePath]);
+        var explicitOverrideEffective = Describe(explicitOverrideSettings, explicitRepositoryRoot);
+        var explicitSource = explicitOverrideEffective.Sources.Single(source => source.Name == "ExternalOverride");
+        Assert("FF005 explicit override outside repository is classified as external", explicitSource.Scope == "external");
+        Console.WriteLine($"FF005 provenance case: explicit override outside repository; source={explicitSource.Name}; scope={explicitSource.Scope}");
+
+        var siblingRepositoryRoot = Path.Combine(runRoot, "provenance", "boundary", "repo");
+        var siblingConfigPath = Path.Combine(runRoot, "provenance", "boundary", "repo-user", "NuGet.Config");
+        var siblingScope = ClassifyScope(siblingConfigPath, siblingRepositoryRoot);
+        Assert("FF005 sibling repository prefix is not classified as repository", siblingScope == "external");
+        Console.WriteLine($"FF005 provenance case: sibling-prefix boundary; repository={Label(siblingRepositoryRoot)}; config={Label(siblingConfigPath)}; scope={siblingScope}");
+    }
+
+    private void RunParseSafetyCases(string runRoot)
+    {
+        var malformedConfigPath = Path.Combine(runRoot, "parse-safety", "malformed.config");
+        var malformedConfigRejected = TryLoadConfigAndGetFailure(malformedConfigPath, out var malformedConfigFailure);
+        Assert("malformed NuGet config is rejected", malformedConfigRejected);
+        Console.WriteLine($"Parse fixture: malformed NuGet.Config; rejected={(malformedConfigRejected ? "yes" : "no")}; exception={malformedConfigFailure ?? "none"}");
+
+        var dtdConfigPath = Path.Combine(runRoot, "parse-safety", "dtd.config");
+        var dtdRejected = TryLoadConfigAndGetFailure(dtdConfigPath, out var dtdFailure);
+        Assert("DTD/external-entity NuGet config is rejected", dtdRejected);
+        Console.WriteLine($"Parse fixture: DTD/external entity NuGet.Config; rejected={(dtdRejected ? "yes" : "no")}; exception={dtdFailure ?? "none"}");
+
+        var malformedJsonPath = Path.Combine(runRoot, "parse-safety", "malformed.json");
+        var malformedJsonRejected = TryParseJsonAndGetFailure(malformedJsonPath, out var malformedJsonFailure);
+        Assert("malformed JSON is rejected", malformedJsonRejected);
+        Console.WriteLine($"Parse fixture: malformed JSON; rejected={(malformedJsonRejected ? "yes" : "no")}; exception={malformedJsonFailure ?? "none"}");
+    }
+
+    private static bool TryLoadConfigAndGetFailure(string path, out string? exceptionType)
+    {
+        try
+        {
+            Settings.LoadSettingsGivenConfigPaths([path]);
+            exceptionType = null;
+            return false;
+        }
+        catch (Exception exception)
+        {
+            exceptionType = exception.GetType().Name;
+            return true;
+        }
+    }
+
+    private static bool TryParseJsonAndGetFailure(string path, out string? exceptionType)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            document.RootElement.ToString();
+            exceptionType = null;
+            return false;
+        }
+        catch (Exception exception)
+        {
+            exceptionType = exception.GetType().Name;
+            return true;
+        }
     }
 
     private static void InstallScopeTemplates(string runRoot)
@@ -377,8 +640,8 @@ internal sealed class ProbeRunner
         WritePackage(Path.Combine(feeds, "repository", "Probe.Exact.1.0.0.nupkg"), "Probe.Exact", "repository");
         WritePackage(Path.Combine(feeds, "repository", "Probe.Prefix.Item.1.0.0.nupkg"), "Probe.Prefix.Item", "repository");
         WritePackage(Path.Combine(feeds, "repository", "Probe.NoMapping.1.0.0.nupkg"), "Probe.NoMapping", "repository");
-        WritePackage(Path.Combine(feeds, "clear", "Probe.Clear.1.0.0.nupkg"), "Probe.Clear", "clear");
-        WritePackage(Path.Combine(feeds, "explicit", "Probe.Explicit.1.0.0.nupkg"), "Probe.Explicit", "explicit");
+        WritePackage(Path.Combine(feeds, "clear", "Probe.Clear.1.0.0.nupkg"), "Probe.Clear", "ClearRepository");
+        WritePackage(Path.Combine(feeds, "explicit", "Probe.Explicit.1.0.0.nupkg"), "Probe.Explicit", "Explicit");
         WritePackage(Path.Combine(feeds, "machine", "Probe.Casing.1.0.0.nupkg"), "Probe.Casing", "machine");
     }
 
@@ -393,8 +656,16 @@ internal sealed class ProbeRunner
         }
 
         var markerEntry = archive.CreateEntry("content/probe-marker.txt");
-        using var markerWriter = new StreamWriter(markerEntry.Open(), Encoding.UTF8);
-        markerWriter.Write(marker);
+        using (var markerWriter = new StreamWriter(markerEntry.Open(), Encoding.UTF8))
+        {
+            markerWriter.Write(marker);
+        }
+
+        var originEntry = archive.CreateEntry("feedfence-origin.txt");
+        using (var originWriter = new StreamWriter(originEntry.Open(), Encoding.UTF8))
+        {
+            originWriter.Write(marker);
+        }
     }
 
     private static void WriteRestoreProject(string path, string packageId)
@@ -423,6 +694,12 @@ internal sealed class ProbeRunner
         }
 
         return result;
+    }
+
+    private static string? ReadPackageMarker(string packageRoot)
+    {
+        var markerPath = Directory.GetFiles(packageRoot, "feedfence-origin.txt", SearchOption.AllDirectories).SingleOrDefault();
+        return markerPath is null ? null : File.ReadAllText(markerPath).Trim();
     }
 
     private static void CopyDirectory(string source, string destination)
@@ -552,6 +829,8 @@ internal sealed class EffectiveConfig
 }
 
 internal sealed record RestoreResult(int ExitCode, long DurationMs, string Output);
+
+internal sealed record ControlledRestoreResult(bool Success, string? Marker);
 
 internal sealed class ExplicitMachineWideSettings : IMachineWideSettings
 {

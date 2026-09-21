@@ -1,0 +1,1 @@
+This project has no repository NuGet.Config; the user config is intentionally absent before settings load.
