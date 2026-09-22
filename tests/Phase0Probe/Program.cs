@@ -751,9 +751,9 @@ internal sealed class ProbeRunner
             if (content.Contains(token, StringComparison.Ordinal))
             {
                 var tokenWithWindowsSeparator = token + '\\';
-                var nativeTokenReplacement = value + Path.DirectorySeparatorChar;
+                var nativeTokenReplacement = new Uri(Path.GetFullPath(value) + Path.DirectorySeparatorChar).AbsoluteUri;
                 var replaced = content.Replace(tokenWithWindowsSeparator, nativeTokenReplacement, StringComparison.Ordinal);
-                File.WriteAllText(file, replaced.Replace(token, value, StringComparison.Ordinal), new UTF8Encoding(false));
+                File.WriteAllText(file, replaced.Replace('\\', '/').Replace(token, value, StringComparison.Ordinal), new UTF8Encoding(false));
             }
         }
     }
