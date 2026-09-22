@@ -750,7 +750,10 @@ internal sealed class ProbeRunner
             var content = File.ReadAllText(file);
             if (content.Contains(token, StringComparison.Ordinal))
             {
-                File.WriteAllText(file, content.Replace(token, value, StringComparison.Ordinal), new UTF8Encoding(false));
+                var tokenWithWindowsSeparator = token + '\\';
+                var nativeTokenReplacement = value + Path.DirectorySeparatorChar;
+                var replaced = content.Replace(tokenWithWindowsSeparator, nativeTokenReplacement, StringComparison.Ordinal);
+                File.WriteAllText(file, replaced.Replace(token, value, StringComparison.Ordinal), new UTF8Encoding(false));
             }
         }
     }
