@@ -12,7 +12,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Restore failed.' }
     dotnet build (Join-Path $repositoryRoot 'KeelMatrix.FeedFence.sln') -c $Configuration --no-restore
     if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
-    dotnet run --project (Join-Path $repositoryRoot 'tests\Phase0Probe\KeelMatrix.FeedFence.Phase0Probe.csproj') -c $Configuration --no-build
+    dotnet run --project (Join-Path (Join-Path $repositoryRoot 'tests') (Join-Path 'Phase0Probe' 'KeelMatrix.FeedFence.Phase0Probe.csproj')) -c $Configuration --no-build
     if ($LASTEXITCODE -ne 0) { throw 'Phase 0 probe failed.' }
 }
 finally {

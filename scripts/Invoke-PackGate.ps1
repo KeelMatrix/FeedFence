@@ -4,8 +4,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
-$shippingProject = Join-Path $repositoryRoot 'src\KeelMatrix.FeedFence\KeelMatrix.FeedFence.csproj'
-$probeProject = Join-Path $repositoryRoot 'tests\Phase0Probe\KeelMatrix.FeedFence.Phase0Probe.csproj'
+$shippingProject = Join-Path (Join-Path $repositoryRoot 'src') (Join-Path 'KeelMatrix.FeedFence' 'KeelMatrix.FeedFence.csproj')
+$probeProject = Join-Path (Join-Path $repositoryRoot 'tests') (Join-Path 'Phase0Probe' 'KeelMatrix.FeedFence.Phase0Probe.csproj')
 $outputRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('feedfence-pack-gate-' + [guid]::NewGuid().ToString('N'))
 
 function Invoke-Checked([string]$FilePath, [string[]]$Arguments) {
@@ -100,7 +100,7 @@ function New-ConsumerFixture([string]$Root, [string]$Name, [string[]]$SourceKeys
         targets = @{ 'net8.0' = @{ 'Fixture.Package/1.0.0' = @{} } }
         libraries = @{ 'Fixture.Package/1.0.0' = @{ type = 'package' } }
     } | ConvertTo-Json -Depth 8 -Compress
-    Set-Content -LiteralPath (Join-Path $projectDirectory 'obj\project.assets.json') -Encoding utf8 -Value $assets
+    Set-Content -LiteralPath (Join-Path (Join-Path $projectDirectory 'obj') 'project.assets.json') -Encoding utf8 -Value $assets
 
     $sources = foreach ($sourceKey in $SourceKeys) {
         $sourceDirectory = Join-Path $fixtureRoot (Join-Path 'feeds' $sourceKey)
@@ -199,7 +199,11 @@ try {
     New-Item -ItemType Directory -Force -Path $localSource, $toolPath, $isolatedPackages, $isolatedHome | Out-Null
     Copy-Item -LiteralPath $nupkgPath -Destination (Join-Path $localSource (Split-Path $nupkgPath -Leaf))
 
-    $telemetryNupkg = Join-Path $env:USERPROFILE '.nuget\packages\keelmatrix.telemetry\0.1.0\keelmatrix.telemetry.0.1.0.nupkg'
+    $userProfile = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+    if ([string]::IsNullOrWhiteSpace($userProfile)) {
+        $userProfile = $env:HOME
+    }
+    $telemetryNupkg = Join-Path $userProfile (Join-Path '.nuget' (Join-Path 'packages' (Join-Path 'keelmatrix.telemetry' (Join-Path '0.1.0' 'keelmatrix.telemetry.0.1.0.nupkg'))))
     if (-not (Test-Path -LiteralPath $telemetryNupkg)) {
         throw "The resolved KeelMatrix.Telemetry 0.1.0 package is not available for the isolated local source: $telemetryNupkg"
     }

@@ -7,7 +7,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
-$projectPath = Join-Path $repositoryRoot 'src\KeelMatrix.FeedFence\KeelMatrix.FeedFence.csproj'
+$projectPath = Join-Path (Join-Path $repositoryRoot 'src') (Join-Path 'KeelMatrix.FeedFence' 'KeelMatrix.FeedFence.csproj')
 $changelogPath = Join-Path $repositoryRoot 'CHANGELOG.md'
 
 if ($Tag -notmatch '^v(?<version>\d+\.\d+\.\d+)$') {

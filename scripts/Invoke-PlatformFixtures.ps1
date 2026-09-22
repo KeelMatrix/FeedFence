@@ -4,12 +4,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
-$toolDll = Join-Path $repositoryRoot "src\KeelMatrix.FeedFence\bin\$Configuration\net8.0\KeelMatrix.FeedFence.dll"
+$toolDll = Join-Path (Join-Path (Join-Path (Join-Path (Join-Path $repositoryRoot 'src') 'KeelMatrix.FeedFence') 'bin') $Configuration) (Join-Path 'net8.0' 'KeelMatrix.FeedFence.dll')
 $fixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('feedfence-platform-' + [guid]::NewGuid().ToString('N'))
 
 if ($IsWindows) {
     $platform = 'Windows'
-    $configRelativePath = Join-Path 'AppData' (Join-Path 'Roaming\NuGet' 'NuGet.Config')
+    $configRelativePath = Join-Path (Join-Path 'AppData' 'Roaming') (Join-Path 'NuGet' 'NuGet.Config')
 }
 elseif ($IsLinux) {
     $platform = 'Linux'
@@ -48,7 +48,7 @@ try {
 
     $projectDirectory = Join-Path $fixtureRoot 'project'
     $objDirectory = Join-Path $projectDirectory 'obj'
-    $feedDirectory = Join-Path $fixtureRoot 'feeds\local'
+    $feedDirectory = Join-Path (Join-Path $fixtureRoot 'feeds') 'local'
     $configPath = Join-Path $fixtureRoot $configRelativePath
     New-Item -ItemType Directory -Force -Path $projectDirectory, $objDirectory, $feedDirectory, (Split-Path -Parent $configPath) | Out-Null
 
@@ -59,7 +59,7 @@ try {
         targets = @{ 'net8.0' = @{ 'Fixture.Package/1.0.0' = @{} } }
         libraries = @{ 'Fixture.Package/1.0.0' = @{ type = 'package' } }
     } | ConvertTo-Json -Depth 8 -Compress
-    Set-Content -LiteralPath (Join-Path $projectDirectory 'obj\project.assets.json') -Encoding utf8 -Value $assets
+    Set-Content -LiteralPath (Join-Path (Join-Path $projectDirectory 'obj') 'project.assets.json') -Encoding utf8 -Value $assets
     $fileUri = [Uri]::new($feedDirectory).AbsoluteUri
     Set-Content -LiteralPath $configPath -Encoding utf8 -Value "<configuration><packageSources><clear /><add key='LocalFeed' value='$fileUri' /></packageSources><packageSourceMapping><packageSource key='LocalFeed'><package pattern='Fixture.*' /></packageSource></packageSourceMapping></configuration>"
 

@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  KEELMATRIX_NO_TELEMETRY: '1'
+
+jobs:
+  verify:
+    name: Verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
+          - macos-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Read SDK version from global.json
+        id: sdk-version
+        shell: pwsh
+        run: |
+          $sdk = (Get-Content -LiteralPath global.json -Raw | ConvertFrom-Json).sdk.version
+          if ([string]::IsNullOrWhiteSpace($sdk)) {
+            throw 'global.json does not specify an SDK version.'
+          }
+          "version=$sdk" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: ${{ steps.sdk-version.outputs.version }}
+
+      - name: Restore from repository NuGet.config
+        shell: pwsh
+        run: dotnet restore KeelMatrix.FeedFence.sln --configfile NuGet.config --no-cache --force
+
+      - name: Build Release with warnings as errors
+        shell: pwsh
+        run: dotnet build KeelMatrix.FeedFence.sln -c Release --no-restore --warnaserror
+
+      - name: Run CLI contract tests
+        shell: pwsh
+        run: dotnet run --project tests/FeedFenceCliTests/KeelMatrix.FeedFence.CliTests.csproj -c Release --no-build
+
+      - name: Run Phase 0 probe
+        shell: pwsh
+        run: dotnet run --project tests/Phase0Probe/KeelMatrix.FeedFence.Phase0Probe.csproj -c Release --no-build
+
+      - name: Run platform fixtures
+        shell: pwsh
+        run: pwsh ./scripts/Invoke-PlatformFixtures.ps1 -Configuration Release
+
+      - name: Verify formatting
+        shell: pwsh
+        run: dotnet format KeelMatrix.FeedFence.sln --verify-no-changes --no-restore
+
+      - name: Run package and consumer gate
+        shell: pwsh
+        run: pwsh ./scripts/Invoke-PackGate.ps1 -Configuration Release
+
+      - name: Audit dependencies
+        shell: pwsh
+        run: pwsh ./scripts/Invoke-DependencyAudit.ps1
+
+      - name: Run repository hygiene check
+        shell: pwsh
+        run: pwsh ./scripts/Invoke-RepoHygiene.ps1
+
+      - name: Run repository hygiene self-test
+        shell: pwsh
+        run: pwsh ./scripts/Invoke-RepoHygiene.ps1 -SelfTest

@@ -37,6 +37,10 @@ jobs:
         shell: pwsh
         run: pwsh ./scripts/Invoke-RepoHygiene.ps1
 
+      - name: Run repository hygiene self-test
+        shell: pwsh
+        run: pwsh ./scripts/Invoke-RepoHygiene.ps1 -SelfTest
+
       - name: Validate release tag and changelog
         id: release-version
         shell: pwsh
