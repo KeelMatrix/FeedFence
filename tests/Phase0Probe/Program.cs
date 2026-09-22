@@ -623,6 +623,10 @@ internal sealed class ProbeRunner
         Directory.CreateDirectory(Path.GetDirectoryName(userConfig)!);
         File.Copy(Path.Combine(runRoot, "hierarchy", "user", "NuGet.Config"), userConfig, overwrite: true);
 
+        var unixUserConfig = Path.Combine(runRoot, "user-profile", ".nuget", "NuGet", "NuGet.Config");
+        Directory.CreateDirectory(Path.GetDirectoryName(unixUserConfig)!);
+        File.Copy(Path.Combine(runRoot, "hierarchy", "user", "NuGet.Config"), unixUserConfig, overwrite: true);
+
         var machineConfig = Path.Combine(runRoot, "machine-common", "NuGet", "Config", "NuGet.Config");
         Directory.CreateDirectory(Path.GetDirectoryName(machineConfig)!);
         File.Copy(Path.Combine(runRoot, "hierarchy", "machine", "NuGet.Config"), machineConfig, overwrite: true);
@@ -852,6 +856,7 @@ internal sealed class ProbeEnvironment : IDisposable
         {
             ["APPDATA"] = Path.Combine(runRoot, "user-appdata"),
             ["USERPROFILE"] = Path.Combine(runRoot, "user-profile"),
+            ["HOME"] = Path.Combine(runRoot, "user-profile"),
             ["NUGET_COMMON_APPLICATION_DATA"] = Path.Combine(runRoot, "machine-common"),
             ["NUGET_PACKAGES"] = Path.Combine(runRoot, "process-packages"),
             ["NUGET_HTTP_CACHE_PATH"] = Path.Combine(runRoot, "http-cache"),
