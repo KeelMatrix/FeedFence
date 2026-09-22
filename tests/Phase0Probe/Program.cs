@@ -491,7 +491,12 @@ internal sealed class ProbeRunner
 
         var fullPath = Path.GetFullPath(configPath);
         var machinePath = Path.GetFullPath(Path.Combine(_runRoot, "machine-common", "NuGet", "Config"));
-        var userPath = Path.GetFullPath(Path.Combine(_runRoot, "user-appdata", "NuGet"));
+        var userPaths = new[]
+        {
+            Path.GetFullPath(Path.Combine(_runRoot, "user-appdata", "NuGet")),
+            Path.GetFullPath(Path.Combine(_runRoot, "user-profile", ".nuget", "NuGet")),
+            Path.GetFullPath(Path.Combine(_runRoot, "dotnet-home", ".nuget", "NuGet"))
+        };
         if (IsWithinDirectory(fullPath, repositoryRoot))
         {
             return "repository";
@@ -502,7 +507,7 @@ internal sealed class ProbeRunner
             return "machine";
         }
 
-        if (IsWithinDirectory(fullPath, userPath))
+        if (userPaths.Any(userPath => IsWithinDirectory(fullPath, userPath)))
         {
             return "user";
         }
@@ -530,21 +535,33 @@ internal sealed class ProbeRunner
         Assert("FF005 nested project repository source is classified as repository", nestedSource.Scope == "repository");
         Console.WriteLine($"FF005 provenance case: nested project; source={nestedSource.Name}; scope={nestedSource.Scope}");
 
-        var userConfig = Path.Combine(runRoot, "user-appdata", "NuGet", "NuGet.Config");
-        if (File.Exists(userConfig))
+        var userConfigPaths = new[]
         {
-            File.Delete(userConfig);
+            Path.Combine(runRoot, "user-appdata", "NuGet", "NuGet.Config"),
+            Path.Combine(runRoot, "user-profile", ".nuget", "NuGet", "NuGet.Config"),
+            Path.Combine(runRoot, "dotnet-home", ".nuget", "NuGet", "NuGet.Config")
+        };
+        foreach (var userConfigPath in userConfigPaths)
+        {
+            if (File.Exists(userConfigPath))
+            {
+                File.Delete(userConfigPath);
+            }
         }
 
         var missingUserRoot = Path.Combine(runRoot, "provenance", "missing-user", "project");
         var missingUserSettings = LoadHierarchySettings(missingUserRoot, runRoot);
         var missingUserEffective = Describe(missingUserSettings, missingUserRoot);
-        var userMaterialized = File.Exists(userConfig);
+        var userMaterialized = userConfigPaths.Any(File.Exists);
         Assert("FF005 missing user config is materialized by NuGet settings load", userMaterialized);
         Assert("FF005 materialized user source is classified as user", missingUserEffective.Sources.Any(source => source.Scope == "user"));
         Console.WriteLine($"FF005 provenance case: missing user config; materialized={(userMaterialized ? "yes" : "no")}; userSources={string.Join(", ", missingUserEffective.Sources.Where(source => source.Scope == "user").Select(source => source.Name))}");
 
-        File.Copy(Path.Combine(runRoot, "hierarchy", "user", "NuGet.Config"), userConfig, overwrite: true);
+        foreach (var userConfigPath in userConfigPaths)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(userConfigPath)!);
+            File.Copy(Path.Combine(runRoot, "hierarchy", "user", "NuGet.Config"), userConfigPath, overwrite: true);
+        }
 
         var outsideRoot = Path.Combine(runRoot, "provenance", "outside", "project");
         var outsideSettings = LoadHierarchySettings(outsideRoot, runRoot);
@@ -626,6 +643,10 @@ internal sealed class ProbeRunner
         var unixUserConfig = Path.Combine(runRoot, "user-profile", ".nuget", "NuGet", "NuGet.Config");
         Directory.CreateDirectory(Path.GetDirectoryName(unixUserConfig)!);
         File.Copy(Path.Combine(runRoot, "hierarchy", "user", "NuGet.Config"), unixUserConfig, overwrite: true);
+
+        var dotnetUserConfig = Path.Combine(runRoot, "dotnet-home", ".nuget", "NuGet", "NuGet.Config");
+        Directory.CreateDirectory(Path.GetDirectoryName(dotnetUserConfig)!);
+        File.Copy(Path.Combine(runRoot, "hierarchy", "user", "NuGet.Config"), dotnetUserConfig, overwrite: true);
 
         var machineConfig = Path.Combine(runRoot, "machine-common", "NuGet", "Config", "NuGet.Config");
         Directory.CreateDirectory(Path.GetDirectoryName(machineConfig)!);
