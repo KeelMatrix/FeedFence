@@ -334,9 +334,11 @@ internal sealed class Fixture : IDisposable
         var mixedSolution = CreateMixedSolutionCase();
         var mixedSolutionResult = Run("check", mixedSolution.Solution!);
         AssertEqual(1, mixedSolutionResult.ExitCode, "mixed solution member exit code");
-        AssertContains(mixedSolutionResult.Output, "FF001");
+        AssertContains(mixedSolutionResult.Output, "FF002");
 
-        var wrongTypedSelector = CreateCase("wrong-typed-selector", ["Company.Internal"], [], ["public", "private"]);
+        var wrongTypedSelector = CreateCase("wrong-typed-selector", ["Company.Internal"],
+            ["<packageSourceMapping><packageSource key=\"public\"><package pattern=\"Company.*\" /></packageSource></packageSourceMapping>"],
+            ["public"]);
         var wrongTypedPolicy = Path.Combine(wrongTypedSelector.Root, "wrong-typed.json");
         File.WriteAllText(
             wrongTypedPolicy,
@@ -437,7 +439,10 @@ internal sealed class Fixture : IDisposable
         WriteProjectAndAssets(fsProject, ["Feed.Mixed"]);
         var solution = Path.Combine(root, "Mixed.sln");
         WriteSolution(solution, [("Empty", "Empty.csproj", "csproj"), ("Packages", "Packages.fsproj", "fsproj")]);
-        WriteConfig(Path.Combine(root, "NuGet.config"), ["one", "two"]);
+        WriteConfig(
+            Path.Combine(root, "NuGet.config"),
+            ["one", "two"],
+            "<packageSourceMapping><packageSource key=\"one\"><package pattern=\"Feed.Mixed\" /></packageSource><packageSource key=\"two\"><package pattern=\"Feed.Mixed\" /></packageSource></packageSourceMapping>");
         return new(root, csProject, solution, null);
     }
 
@@ -459,11 +464,11 @@ internal sealed class Fixture : IDisposable
             Encoding.UTF8);
     }
 
-    private static void WriteConfig(string path, IReadOnlyList<string> sourceKeys)
+    private static void WriteConfig(string path, IReadOnlyList<string> sourceKeys, string mapping = "")
     {
         var root = Path.GetDirectoryName(path)!;
         var sources = sourceKeys.Select(key => $"<add key=\"{SecurityElement.Escape(key)}\" value=\"{SecurityElement.Escape(Path.Combine(root, "feeds", key))}\" />");
-        File.WriteAllText(path, $"<configuration><packageSources><clear />{string.Join(string.Empty, sources)}</packageSources></configuration>", Encoding.UTF8);
+        File.WriteAllText(path, $"<configuration><packageSources><clear />{string.Join(string.Empty, sources)}</packageSources>{mapping}</configuration>", Encoding.UTF8);
     }
 
     private static void WriteSolution(string path, IReadOnlyList<(string Name, string RelativePath, string Extension)> projects)
