@@ -26,6 +26,8 @@ analysis. Reports involving unexpected network access, credential handling, or
 diagnostic disclosure should be treated as security-sensitive.
 
 FeedFence telemetry is best-effort and activates only after a completed analysis
-with a resolved package and an effective source-policy evaluation. Its bounded
-summary contains no package/source identities, URLs, policy contents, paths,
-credentials, or raw diagnostics. Disable it with `KEELMATRIX_NO_TELEMETRY=1`.
+with a resolved package and an effective source-policy evaluation. FeedFence
+calls the shared client's parameterless activation API and attaches no analysis
+summary, package/source identities, URLs, policy contents, paths, credentials,
+or raw diagnostics. See [PRIVACY.md](PRIVACY.md) for the shared event contract
+and disable it with `KEELMATRIX_NO_TELEMETRY=1`.

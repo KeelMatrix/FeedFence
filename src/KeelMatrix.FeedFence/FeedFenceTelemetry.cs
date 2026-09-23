@@ -1,23 +1,28 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using KeelMatrix.Telemetry;
 
 namespace KeelMatrix.FeedFence;
 
 internal static class FeedFenceTelemetry
 {
-    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    public static void TrackActivation(AnalysisResult result) =>
+        TrackActivation(
+            result,
+            static (toolName, toolType) => new Client(toolName, toolType).TrackActivation);
 
-    public static void TrackActivation(AnalysisResult result)
+    internal static void TrackActivation(
+        AnalysisResult result,
+        Func<string, Type, Action> createActivationRequest)
     {
-        if (CreatePayload(result) is null)
+        ArgumentNullException.ThrowIfNull(createActivationRequest);
+
+        if (!IsActivationEligible(result))
         {
             return;
         }
 
         try
         {
-            new Client("feedfence", typeof(VersionInfo)).TrackActivation();
+            createActivationRequest("feedfence", typeof(VersionInfo))();
         }
         catch
         {
@@ -25,50 +30,6 @@ internal static class FeedFenceTelemetry
         }
     }
 
-    internal static FeedFenceTelemetryPayload? CreatePayload(AnalysisResult result)
-    {
-        if (result.PackageCount < 1 || !result.EffectiveSourcePolicyEvaluated)
-        {
-            return null;
-        }
-
-        return new(
-            VersionInfo.Current,
-            Environment.Version.Major,
-            OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsLinux() ? "linux" : OperatingSystem.IsMacOS() ? "macos" : "other",
-            Bucket(result.PackageCount),
-            Bucket(result.ActiveSourceCount),
-            result.MappingEnabled,
-            result.Diagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Violation)
-                ? "violation"
-                : result.Diagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Warning)
-                    ? "warning"
-                    : "pass",
-            Bucket(result.Diagnostics.Count));
-    }
-
-    internal static string SerializePayload(AnalysisResult result)
-    {
-        var payload = CreatePayload(result) ?? throw new InvalidOperationException("telemetry activation is not eligible for this result.");
-        return JsonSerializer.Serialize(payload, JsonOptions);
-    }
-
-    private static string Bucket(int count) => count switch
-    {
-        <= 0 => "0",
-        <= 5 => "1-5",
-        <= 20 => "6-20",
-        _ => "21+"
-    };
+    internal static bool IsActivationEligible(AnalysisResult result) =>
+        result.PackageCount > 0 && result.EffectiveSourcePolicyEvaluated;
 }
-
-internal sealed record FeedFenceTelemetryPayload(
-    string FeedFenceVersion,
-    [property: JsonPropertyName("dotnetMajorVersion")]
-    int DotNetMajorVersion,
-    string OsFamily,
-    string ResolvedPackageCountBucket,
-    string ActiveSourceCountBucket,
-    bool PackageSourceMappingEnabled,
-    string ResultClass,
-    string DiagnosticCountBucket);

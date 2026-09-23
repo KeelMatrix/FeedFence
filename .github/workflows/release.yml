@@ -76,18 +76,14 @@ jobs:
         shell: pwsh
         run: pwsh ./scripts/Invoke-DependencyAudit.ps1
 
-      - name: Run package and consumer gate
-        shell: pwsh
-        run: pwsh ./scripts/Invoke-PackGate.ps1 -Configuration Release
-
-      - name: Pack exact release artifacts
+      - name: Pack, inspect, and consume exact release artifacts
         shell: pwsh
         run: |
           if (Test-Path -LiteralPath artifacts) {
             Remove-Item -LiteralPath artifacts -Recurse -Force
           }
           New-Item -ItemType Directory -Force -Path artifacts/packages | Out-Null
-          dotnet pack src/KeelMatrix.FeedFence/KeelMatrix.FeedFence.csproj -c Release --no-build --no-restore --include-symbols -p:SymbolPackageFormat=snupkg -p:PackageVersion=${{ steps.release-version.outputs.version }} --output artifacts/packages
+          pwsh ./scripts/Invoke-PackGate.ps1 -Configuration Release -PackageVersion ${{ steps.release-version.outputs.version }} -ArtifactDirectory artifacts/packages
           pwsh ./scripts/Invoke-ReleaseContract.ps1 -Tag "${{ github.ref_name }}" -ArtifactDirectory artifacts/packages
 
       - name: Upload verified artifacts

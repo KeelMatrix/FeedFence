@@ -132,17 +132,17 @@ JSON has schema version `1`, fixed property order, and sorted sources/diagnostic
 
 FeedFence requests one best-effort shared `KeelMatrix.Telemetry` activation only after a completed analysis has at least one resolved package and one effective source-policy evaluation. Installation, assembly loading, parse failures, and no-package runs do not activate telemetry, and telemetry failure cannot change output or exit code.
 
-The bounded FeedFence summary is limited to FeedFence version, .NET major version, broad OS family, resolved-package-count bucket, active-source-count bucket, mapping-enabled state, coarse result class, and diagnostic-count bucket. It never adds package/source identities, URLs, policy contents, paths, credentials, or raw diagnostics. Opt out with `KEELMATRIX_NO_TELEMETRY=1`; local validation sets this variable.
+FeedFence calls the shared client's parameterless activation API with the tool name `feedfence` and the FeedFence assembly type. It does not attach a FeedFence-specific summary, analysis counts, outcomes, diagnostics, package/source identities, URLs, policy contents, paths, or credentials. The shared activation contract supplies its own tool/version, anonymous project and installation hashes, runtime, OS, CI, and timestamp fields as documented in [Privacy](PRIVACY.md). Opt out with `KEELMATRIX_NO_TELEMETRY=1`; local validation sets this variable.
 
 ## Limitations and privacy
 
 FeedFence verifies resolved local restore artifacts and effective NuGet configuration. It does not scan vulnerabilities or licenses, query package availability, validate credentials, rewrite configuration, invoke restore, or claim to be a network-isolation sandbox. Configuration, XML, JSON, and restore inputs are size/depth/count bounded; assets graphs accept at most 50,000 libraries/resolved packages, 256 target frameworks, and 100,000 target-library references. Malformed, incomplete, unsupported, or impossible nonempty graphs fail closed. XML DTD and external entity processing is disabled.
 
-The tool has no supported in-process library API in v1. It targets `net8.0` and is intended for Windows, Linux, and macOS.
+The tool has no supported in-process library API in v1. It targets `net8.0`.
 
-## Compatibility evidence
+## Supported Platforms
 
-Run `pwsh ./scripts/Invoke-PlatformFixtures.ps1 -Configuration Release`. The disposable offline fixture checks platform configuration locations, path separators, an absolute `file://` local feed, casing, and JSON output. Windows passed locally on the current host. Linux and macOS fixture runs remain unverified here; no remote CI evidence is claimed for this private repository.
+FeedFence supports Windows, Linux, and macOS. The repository's three-OS CI matrix runs the Release build, CLI contracts, NuGet-equivalence probe, platform-specific configuration/path fixtures, exact package inspection, and installed-tool consumer gate on each supported operating system.
 
 ## Troubleshooting and non-goals
 
@@ -152,18 +152,6 @@ Run `pwsh ./scripts/Invoke-PlatformFixtures.ps1 -Configuration Release`. The dis
 - `FF005`: inspect user/machine configuration and move required policy into the repository, or use strict mode.
 
 FeedFence is not a restore engine, feed client, network-isolation sandbox, vulnerability/license scanner, credential validator, package-content scanner, configuration rewriter, automatic mapping generator, remote policy service, or supported in-process API. It does not prove feed reachability or credential validity.
-
-## Development validation
-
-```powershell
-dotnet build KeelMatrix.FeedFence.sln -c Release
-dotnet run --project tests/FeedFenceCliTests/KeelMatrix.FeedFence.CliTests.csproj -c Release --no-build
-dotnet run --project tests/Phase0Probe/KeelMatrix.FeedFence.Phase0Probe.csproj -c Release --no-build
-pwsh ./scripts/Invoke-PackGate.ps1 -Configuration Release
-pwsh ./scripts/Invoke-DependencyAudit.ps1
-```
-
-The Phase 0 probe remains the NuGet-equivalence guard. It uses synthetic local file feeds only and does not contact real package sources.
 
 ## License
 

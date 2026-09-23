@@ -93,17 +93,30 @@ internal sealed class Fixture : IDisposable
             true,
             [new SourceInfo("public", "file:///local", true, "repository-controlled configuration", true)],
             [new Diagnostic("FF005", DiagnosticSeverity.Warning, "synthetic warning")]);
-        var telemetryJson = FeedFenceTelemetry.SerializePayload(telemetryResult);
-        using (var telemetryDocument = JsonDocument.Parse(telemetryJson))
-        {
-            var properties = telemetryDocument.RootElement.EnumerateObject().Select(property => property.Name).ToArray();
-            AssertEqual(
-                "feedFenceVersion,dotnetMajorVersion,osFamily,resolvedPackageCountBucket,activeSourceCountBucket,packageSourceMappingEnabled,resultClass,diagnosticCountBucket",
-                string.Join(',', properties),
-                "telemetry payload shape");
-        }
+        var telemetryActivationRequests = 0;
+        string? telemetryToolName = null;
+        Type? telemetryToolType = null;
+        FeedFenceTelemetry.TrackActivation(
+            telemetryResult,
+            (toolName, toolType) =>
+            {
+                telemetryToolName = toolName;
+                telemetryToolType = toolType;
+                return () => telemetryActivationRequests++;
+            });
+        AssertEqual(1, telemetryActivationRequests, "eligible shared telemetry activation request");
+        AssertEqual("feedfence", telemetryToolName, "shared telemetry tool name");
+        AssertEqual(typeof(VersionInfo), telemetryToolType, "shared telemetry version type");
+        var sharedTrackActivation = typeof(KeelMatrix.Telemetry.Client).GetMethod("TrackActivation", Type.EmptyTypes)
+            ?? throw new InvalidOperationException("shared telemetry has no parameterless activation API");
+        AssertEqual(0, sharedTrackActivation.GetParameters().Length, "shared telemetry activation payload parameter count");
 
-        AssertEqual(null, FeedFenceTelemetry.CreatePayload(new AnalysisResult(0, 0, 1, false, 0, false, [], [])), "no-package telemetry activation");
+        FeedFenceTelemetry.TrackActivation(
+            new AnalysisResult(0, 0, 1, false, 0, false, [], []),
+            (_, _) => throw new InvalidOperationException("ineligible analysis requested telemetry"));
+        AssertEqual(false, FeedFenceTelemetry.IsActivationEligible(new AnalysisResult(0, 0, 1, false, 0, false, [], [])), "no-package telemetry activation eligibility");
+
+        FeedFenceTelemetry.TrackActivation(telemetryResult, (_, _) => () => throw new InvalidOperationException("synthetic telemetry failure"));
 
         var equal = CreateCase("equal", ["Feed.Equal"],
             [

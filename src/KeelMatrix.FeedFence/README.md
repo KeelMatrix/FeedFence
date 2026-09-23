@@ -50,18 +50,24 @@ details, the JSON/SARIF field contracts, troubleshooting, and explicit
 non-goals.
 
 Activation uses shared `KeelMatrix.Telemetry` only after a completed analysis
-with a resolved package and effective source-policy evaluation. Its bounded
-FeedFence summary excludes package/source identities, URLs, policy contents,
-paths, credentials, and raw diagnostics. Telemetry errors cannot alter a run.
-Opt out with `KEELMATRIX_NO_TELEMETRY=1`.
+with a resolved package and effective source-policy evaluation. FeedFence calls
+the shared parameterless activation API and does not attach analysis counts,
+results, diagnostics, package/source identities, URLs, policy contents, paths,
+or credentials. The shared client owns the activation event fields and delivery
+contract. Telemetry errors cannot alter a run. Opt out with
+`KEELMATRIX_NO_TELEMETRY=1`.
 
-The platform fixture runner is `pwsh ./scripts/Invoke-PlatformFixtures.ps1 -Configuration Release`. Windows has local passing evidence on the current
-host; Linux and macOS fixture runs remain unverified here.
+FeedFence supports Windows, Linux, and macOS on .NET 8. The repository's CI
+matrix validates its platform-specific configuration/path fixtures and the
+installed package on all three operating systems.
 
 For the complete policy schema, diagnostic reference, and consumer-facing
 limitations, see the [FeedFence repository README](https://github.com/KeelMatrix/FeedFence#readme).
 The versioned JSON and SARIF compatibility rules are in the
 [report contract](https://github.com/KeelMatrix/FeedFence/blob/main/docs/report-contract.md).
+The shared activation fields, local state, delivery behavior, and opt-out
+precedence are described in the
+[FeedFence privacy contract](https://github.com/KeelMatrix/FeedFence/blob/main/PRIVACY.md).
 
 ## License
 

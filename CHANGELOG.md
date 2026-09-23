@@ -9,5 +9,5 @@
   provenance.
 - Added deterministic JSON and SARIF reports with stable `FF001`–`FF008`
   identities and an explicit stdout/stderr contract.
-- Added bounded shared telemetry activation, cross-platform fixture coverage,
-  and an isolated package-consumer smoke gate.
+- Added opt-out-aware shared activation measurement, three-platform fixture
+  coverage, and an isolated package-consumer smoke gate.

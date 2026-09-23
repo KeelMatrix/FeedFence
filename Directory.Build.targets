@@ -1,0 +1,28 @@
+<Project>
+  <Target
+    Name="ValidateSensitivePackageInputs"
+    BeforeTargets="GenerateNuspec"
+    Condition="'$(IsPackable)' == 'true'">
+    <ItemGroup>
+      <_FeedFencePackInput Include="@(_PackageFiles)" />
+      <_FeedFencePackInput Include="@(_BuildOutputInPackage)" />
+      <_FeedFencePackInput Include="@(_TargetPathsToSymbols)" />
+      <_FeedFencePackInput Include="@(_SourceFiles)" />
+      <_FeedFencePackInput
+        Include="$(FeedFenceSensitivePackGuardProbe)"
+        Condition="'$(FeedFenceSensitivePackGuardProbe)' != ''" />
+
+      <_FeedFenceSensitivePackInput
+        Include="@(_FeedFencePackInput)"
+        Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(_FeedFencePackInput.Filename)%(_FeedFencePackInput.Extension)', '(?i)^(?:\.env(?:\..*)?|nuget\.config|keelmatrix\.telemetry\.json|appsettings(?:\.[^.]+)?\.json|secrets\.json|credentials\.json|id_rsa|id_ed25519|.*\.(?:pfx|p12|pem|key))$')) Or $([System.Text.RegularExpressions.Regex]::IsMatch('%(_FeedFencePackInput.Identity)', '(?i)(^|[\\/])(?:\.git|\.github|tests?|artifacts?|temp|tmp|guides?)([\\/]|$)'))" />
+    </ItemGroup>
+
+    <Error
+      Condition="'@(_FeedFenceSensitivePackInput)' != ''"
+      Text="Sensitive pack input rejected: @(_FeedFenceSensitivePackInput, ', '). Remove secret-bearing or repository-internal files from the package input graph." />
+    <Message
+      Condition="'@(_FeedFenceSensitivePackInput)' == ''"
+      Importance="High"
+      Text="Sensitive pack guard: PASS (@(_FeedFencePackInput->Count()) evaluated package inputs)." />
+  </Target>
+</Project>

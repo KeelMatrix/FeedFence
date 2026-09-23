@@ -44,10 +44,11 @@ should be changed to contact a real package feed during analysis.
 ## Release preparation
 
 The shipping project is the only packable project. The package gate validates
-the exact `.nupkg` and `.snupkg` allowlist and installs the tool from an
-isolated local package source. It also checks the installed command, JSON
-determinism, missing-artifact failures, dependency metadata, and package-content
-exclusions.
+the complete `.nupkg` and `.snupkg` archive allowlists, nuspec/tool/runtime and
+SourceLink metadata, sensitive-input rejection, and icon byte identity. It
+installs the exact inspected `.nupkg` from a single-source local feed with
+isolated NuGet caches. The release workflow gives the gate its upload directory,
+so the inspected artifacts are the artifacts uploaded to the publish job.
 
 The release contract check is intentionally expected to fail while the
 changelog remains under `[Unreleased]`:
@@ -65,5 +66,4 @@ create a tag or publish a package as part of ordinary local validation.
 
 Keep `KEELMATRIX_NO_TELEMETRY=1` set for local repository work. Fixtures must
 use synthetic package IDs, feeds, and configuration and must not contain
-credentials, authenticated URLs, or customer data.
 credentials, authenticated URLs, or customer data.

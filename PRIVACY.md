@@ -13,10 +13,20 @@ local paths, or package contents.
 
 After a completed analysis with at least one resolved package and one effective
 source-policy evaluation, the tool may request one activation through the
-shared `KeelMatrix.Telemetry` package. The FeedFence summary is limited to the
-tool version, .NET major version, broad OS family, coarse package/source and
-diagnostic counts, mapping-enabled state, and coarse result class. It never
-sends package IDs or versions, source names/URLs, protected patterns,
-exception reasons, repository/project/solution names, paths, credentials,
-configuration contents, or raw diagnostics. Telemetry failures do not affect
-analysis or exit codes. Set `KEELMATRIX_NO_TELEMETRY=1` to opt out.
+shared `KeelMatrix.Telemetry` package. FeedFence calls
+`Client.TrackActivation()` with the tool name `feedfence` and the FeedFence
+assembly type. It does not pass a custom payload and does not request shared
+heartbeats.
+
+The shared client owns the event contract. When it can derive a stable anonymous
+project identity and activation has not already been recorded, its activation
+event contains the tool and assembly versions, telemetry/schema versions,
+anonymous project and installation hashes, runtime, operating system, CI state,
+and timestamp. Its queue, marker, salt, HTTPS delivery, retention, and opt-out
+precedence are documented in the shared privacy policy linked above.
+
+FeedFence therefore does not add analysis counts or results, package IDs or
+versions, source names/URLs, protected patterns, exception reasons,
+repository/project/solution names, paths, credentials, configuration contents,
+or raw diagnostics to telemetry. Telemetry failures do not affect analysis or
+exit codes. Set `KEELMATRIX_NO_TELEMETRY=1` to opt out.
