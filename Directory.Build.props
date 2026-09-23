@@ -11,7 +11,6 @@
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
-    <TreatWarningsAsErrors Condition="'$(IsShippingProject)' == 'true'">true</TreatWarningsAsErrors>
     <NoWarn>$(NoWarn);CA1812</NoWarn>
   </PropertyGroup>
 

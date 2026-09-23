@@ -47,7 +47,7 @@ function Invoke-Captured([string]$FilePath, [string[]]$Arguments, [string]$Worki
 function Assert-ConsumerResult($Result, [int]$ExpectedExitCode, [string]$Label) {
     Write-Output "Consumer ${Label}: exit=$($Result.ExitCode); duration=$($Result.DurationMs) ms"
     if ($Result.ExitCode -ne $ExpectedExitCode) {
-        throw "Consumer $Label failed with exit code $($Result.ExitCode). stderr: $($Result.StandardError.Trim())"
+        throw "Consumer $Label failed with exit code $($Result.ExitCode). stdout: $($Result.StandardOutput.Trim()) stderr: $($Result.StandardError.Trim())"
     }
 }
 
@@ -111,6 +111,74 @@ function New-ConsumerFixture([string]$Root, [string]$Name, [string[]]$SourceKeys
     $configPath = Join-Path $fixtureRoot 'NuGet.Config'
     Set-Content -LiteralPath $configPath -Encoding utf8 -Value "<configuration><packageSources><clear />$($sources -join '')</packageSources></configuration>"
     [pscustomobject]@{ Root = $fixtureRoot; Project = $projectPath; Config = $configPath }
+}
+
+function Write-EquivalencePackage([string]$Path, [string]$Id) {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
+    $archive = [System.IO.Compression.ZipFile]::Open($Path, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        $nuspec = $archive.CreateEntry("$Id.nuspec")
+        $writer = [System.IO.StreamWriter]::new($nuspec.Open(), [System.Text.Encoding]::UTF8)
+        try { $writer.Write("<?xml version=`"1.0`" encoding=`"utf-8`"?><package><metadata><id>$Id</id><version>1.0.0</version><authors>Fixture</authors><description>Offline equivalence fixture.</description></metadata></package>") }
+        finally { $writer.Dispose() }
+    }
+    finally { $archive.Dispose() }
+}
+
+function Write-EquivalenceProject([string]$Path, [string]$PackageId) {
+    New-Item -ItemType Directory -Force -Path (Join-Path (Split-Path -Parent $Path) 'obj') | Out-Null
+    Set-Content -LiteralPath $Path -Encoding utf8 -Value "<Project Sdk=`"Microsoft.NET.Sdk`"><PropertyGroup><TargetFramework>net8.0</TargetFramework><RestoreProjectStyle>PackageReference</RestoreProjectStyle></PropertyGroup><ItemGroup><PackageReference Include=`"$PackageId`" Version=`"1.0.0`" /></ItemGroup></Project>"
+}
+
+function Write-EquivalenceAssets([string]$ProjectPath, [string]$PackageId) {
+    $assets = @{
+        version = 3
+        targets = @{ 'net8.0' = @{ "$PackageId/1.0.0" = @{} } }
+        libraries = @{ "$PackageId/1.0.0" = @{ type = 'package' } }
+    } | ConvertTo-Json -Depth 8 -Compress
+    Set-Content -LiteralPath (Join-Path (Join-Path (Split-Path -Parent $ProjectPath) 'obj') 'project.assets.json') -Encoding utf8 -Value $assets
+}
+
+function Invoke-InstalledEquivalenceCases($ToolCommand, [string]$Root, [hashtable]$Environment) {
+    $equivalenceRoot = Join-Path $Root 'installed-equivalence'
+    $casingRoot = Join-Path $equivalenceRoot 'casing'
+    $casingRepository = Join-Path $casingRoot 'repository-feed'
+    $casingProject = Join-Path $casingRoot 'Fixture.csproj'
+    $casingConfig = Join-Path $casingRoot 'NuGet.Config'
+    $casingPackageId = 'Fixture.Casing'
+    Write-EquivalencePackage (Join-Path $casingRepository "$casingPackageId.1.0.0.nupkg") $casingPackageId
+    Write-EquivalenceProject $casingProject $casingPackageId
+    $escapedCasingRepository = [System.Security.SecurityElement]::Escape($casingRepository)
+    Set-Content -LiteralPath $casingConfig -Encoding utf8 -Value "<configuration><packageSources><clear /><add key='Repository' value='$escapedCasingRepository' /></packageSources><packageSourceMapping><packageSource key='repository'><package pattern='$casingPackageId' /></packageSource></packageSourceMapping></configuration>"
+    $casingPackages = Join-Path $equivalenceRoot 'casing-packages'
+    $casingRestore = Invoke-Captured 'dotnet' @('restore', $casingProject, '--configfile', $casingConfig, '--packages', $casingPackages, '--force', '--no-cache', '--disable-parallel', '--verbosity', 'minimal') $casingRoot $Environment
+    Assert-ConsumerResult $casingRestore 0 'installed casing equivalence restore'
+    $casingCheck = Invoke-Captured $ToolCommand.FullName @('check', $casingProject, '--config', $casingConfig, '--format', 'text') $Root $Environment
+    Assert-ConsumerResult $casingCheck 0 'installed casing equivalence analyzer'
+    if ($casingCheck.StandardOutput -match 'FF004') { throw 'The installed casing equivalence fixture reported contradictory FF004.' }
+    Write-Output 'Installed CLI equivalence: source-key casing; restore-exit=0; analyzer-exit=0; diagnostics=none (FF004 absent).'
+
+    $disabledRoot = Join-Path $equivalenceRoot 'disabled-exact'
+    $disabledActive = Join-Path $disabledRoot 'active-feed'
+    $disabledExact = Join-Path $disabledRoot 'exact-feed'
+    $disabledProject = Join-Path $disabledRoot 'Fixture.csproj'
+    $disabledConfig = Join-Path $disabledRoot 'NuGet.Config'
+    $disabledPackageId = 'Fixture.DisabledExact'
+    Write-EquivalencePackage (Join-Path $disabledActive "$disabledPackageId.1.0.0.nupkg") $disabledPackageId
+    New-Item -ItemType Directory -Force -Path $disabledExact | Out-Null
+    Write-EquivalenceProject $disabledProject $disabledPackageId
+    $escapedDisabledExact = [System.Security.SecurityElement]::Escape($disabledExact)
+    $escapedDisabledActive = [System.Security.SecurityElement]::Escape($disabledActive)
+    Set-Content -LiteralPath $disabledConfig -Encoding utf8 -Value "<configuration><packageSources><clear /><add key='DisabledExact' value='$escapedDisabledExact' /><add key='ActiveWildcard' value='$escapedDisabledActive' /></packageSources><disabledPackageSources><add key='DisabledExact' value='true' /></disabledPackageSources><packageSourceMapping><packageSource key='DisabledExact'><package pattern='$disabledPackageId' /></packageSource><packageSource key='ActiveWildcard'><package pattern='*' /></packageSource></packageSourceMapping></configuration>"
+    $disabledPackages = Join-Path $equivalenceRoot 'disabled-packages'
+    $disabledRestore = Invoke-Captured 'dotnet' @('restore', $disabledProject, '--configfile', $disabledConfig, '--packages', $disabledPackages, '--force', '--no-cache', '--disable-parallel', '--verbosity', 'minimal') $disabledRoot $Environment
+    Assert-ConsumerResult $disabledRestore 1 'installed disabled exact equivalence restore'
+    Write-EquivalenceAssets $disabledProject $disabledPackageId
+    $disabledCheck = Invoke-Captured $ToolCommand.FullName @('check', $disabledProject, '--config', $disabledConfig, '--format', 'text') $Root $Environment
+    Assert-ConsumerResult $disabledCheck 1 'installed disabled exact equivalence analyzer'
+    if ($disabledCheck.StandardOutput -notmatch 'FF003') { throw 'The installed disabled exact equivalence fixture did not report FF003.' }
+    if ($disabledCheck.StandardOutput -match 'could not be reconciled') { throw 'The installed disabled exact equivalence fixture reported a reconciliation exception.' }
+    Write-Output 'Installed CLI equivalence: disabled exact + active wildcard; restore-exit=1; analyzer-exit=1; diagnostics=FF003 (no reconciliation exception).'
 }
 
 try {
@@ -241,6 +309,8 @@ try {
     if ($passJson.StandardOutput -cne $passJsonRepeat.StandardOutput) { throw 'Installed JSON output is not byte-deterministic.' }
     if (($passJson.StandardOutput | ConvertFrom-Json).schemaVersion -ne 1) { throw 'Installed JSON schema version is not 1.' }
     Write-Output 'Consumer JSON determinism: PASS (two identical installed-tool runs matched byte-for-byte).'
+
+    Invoke-InstalledEquivalenceCases $toolCommand $consumerRoot $consumerEnvironment
 
     $violation = New-ConsumerFixture $consumerRoot 'violation' @('public', 'private')
     $violationResult = Invoke-Captured $toolCommand.FullName @('check', $violation.Project, '--config', $violation.Config, '--format', 'text') $consumerRoot $consumerEnvironment

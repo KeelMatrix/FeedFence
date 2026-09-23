@@ -22,6 +22,11 @@ The fixture corpus covers:
 - malformed NuGet XML, DTD/external-entity XML, and malformed JSON fixtures;
 - absence of network-capable sources and credential-provider paths during restore.
 
+The probe also invokes the built shipping CLI for each restore-backed mapping
+fixture and compares its exit code and diagnostics with the actual restore
+outcome. The pack gate repeats the casing and disabled-exact ordering cases
+through the installed tool from the generated package.
+
 Each synthetic package contains a distinct `feedfence-origin.txt` marker. The
 probe reads that marker from the isolated global-packages folder after restore,
 then repeats restore with each active source isolated and with each expected

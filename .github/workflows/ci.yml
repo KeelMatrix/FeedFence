@@ -57,6 +57,10 @@ jobs:
         shell: pwsh
         run: dotnet build KeelMatrix.FeedFence.sln -c Release --no-restore --warnaserror
 
+      - name: Verify Release warnings-as-errors policy
+        shell: pwsh
+        run: pwsh ./scripts/Invoke-ReleaseWarningsAsErrors.ps1 -Configuration Release
+
       - name: Run CLI contract tests
         shell: pwsh
         run: dotnet run --project tests/FeedFenceCliTests/KeelMatrix.FeedFence.CliTests.csproj -c Release --no-build

@@ -6,6 +6,7 @@
     <RootNamespace>KeelMatrix.FeedFence</RootNamespace>
     <IsPackable>true</IsPackable>
     <IsShippingProject>true</IsShippingProject>
+    <TreatWarningsAsErrors Condition="'$(Configuration)' == 'Release'">true</TreatWarningsAsErrors>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>

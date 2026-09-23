@@ -71,7 +71,7 @@ Exit codes are stable:
 * `FF001` — multiple active sources are available without mapping (violation). Add mapping or reduce active sources; this does not prove feed trust by itself.
 * `FF002` — multiple sources remain at the same winning specificity (violation). Make the exact/prefix/wildcard winner unique; textual overlap at lower specificity is not enough.
 * `FF003` — a direct or transitive resolved package has no eligible mapped source (violation). Correct mapping and restore; FeedFence does not restore for you.
-* `FF004` — a mapping source key does not exactly match a configured source key (violation). Match spelling and casing; URLs do not define source identity.
+* `FF004` — a mapping source key does not correspond to any configured source key (violation). NuGet accepts case-only differences; genuinely invalid source identities still fail. URLs do not define source identity.
 * `FF005` — an active source comes from inherited or external configuration (warning; violation with `--strict`). Move required policy into the repository or document intentional inheritance.
 * `FF006` — a source uses plain HTTP (violation). Use HTTPS or a narrow documented exception; FeedFence does not validate reachability or credentials.
 * `FF007` — a protected/private package can resolve outside its declared trust set (violation). Map it to the trusted source or add a reasoned narrow exception.
@@ -148,7 +148,7 @@ Run `pwsh ./scripts/Invoke-PlatformFixtures.ps1 -Configuration Release`. The dis
 
 - Missing restore artifacts: run `dotnet restore` for the same target; FeedFence never restores for you.
 - Malformed config/policy or assets disagreement: fix the input and rerun; FeedFence fails closed with exit `2`.
-- `FF004`: mapping identity is the configured source key, including casing; match `<packageSource key>` to `<add key>` exactly.
+- `FF004`: mapping identity is matched to the configured source key using NuGet's case-insensitive source identity; case-only differences are accepted, while an unknown source key fails.
 - `FF005`: inspect user/machine configuration and move required policy into the repository, or use strict mode.
 
 FeedFence is not a restore engine, feed client, network-isolation sandbox, vulnerability/license scanner, credential validator, package-content scanner, configuration rewriter, automatic mapping generator, remote policy service, or supported in-process API. It does not prove feed reachability or credential validity.

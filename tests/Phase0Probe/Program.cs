@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Security;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using NuGet.Configuration;
 
@@ -28,6 +30,7 @@ internal sealed class ProbeRunner
     private readonly List<string> _failures = [];
     private readonly List<string> _observations = [];
     private string _runRoot = string.Empty;
+    private string _shippingTool = string.Empty;
 
     public int Run()
     {
@@ -40,6 +43,11 @@ internal sealed class ProbeRunner
         var runRoot = Path.Combine(Path.GetTempPath(), "feedfence-phase0-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(runRoot);
         _runRoot = runRoot;
+        _shippingTool = Path.Combine(FindRepositoryRoot(AppContext.BaseDirectory), "src", "KeelMatrix.FeedFence", "bin", "Release", "net8.0", "KeelMatrix.FeedFence.dll");
+        if (!File.Exists(_shippingTool))
+        {
+            throw new FileNotFoundException("Shipping FeedFence CLI was not built beside the Phase 0 probe.", _shippingTool);
+        }
 
         try
         {
@@ -59,6 +67,7 @@ internal sealed class ProbeRunner
             RunClearCase(runRoot);
             RunNoMappingCase(runRoot);
             RunCasingCase(runRoot);
+            RunDisabledExactCase(runRoot);
             RunExplicitConfigCase(runRoot);
             RunProvenanceCases(runRoot);
             RunParseSafetyCases(runRoot);
@@ -275,6 +284,55 @@ internal sealed class ProbeRunner
         {
             Console.WriteLine($"  output: {restore.Output}");
         }
+
+        if (!actualSuccess)
+        {
+            Console.WriteLine($"Shipping CLI equivalence: {name}; skipped because restore produced no trustworthy assets graph");
+            return;
+        }
+
+        var mappingEnabled = PackageSourceMapping.GetPackageSourceMapping(settings).IsEnabled;
+        var expectedShippingExit = mappingEnabled ? expectedCandidates.Count == 1 ? 0 : 1 : expectedCandidates.Count > 1 ? 1 : 0;
+        var shipping = RunShippingCheck(projectPath, configPath);
+        Assert($"{name} shipping CLI matches restore policy exit", shipping.ExitCode == expectedShippingExit);
+        if (expectedCandidates.Count > 1)
+        {
+            Assert($"{name} shipping CLI reports ambiguity", shipping.Output.Contains(mappingEnabled ? "FF002" : "FF001", StringComparison.Ordinal));
+        }
+        if (name.Contains("casing", StringComparison.OrdinalIgnoreCase))
+        {
+            Assert($"{name} shipping CLI accepts case-only source identity", !shipping.Output.Contains("FF004", StringComparison.Ordinal));
+        }
+        var diagnosticCodes = Regex.Matches(shipping.Output, "FF\\d{3}")
+            .Select(match => match.Value)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal);
+        Console.WriteLine($"Shipping CLI equivalence: {name}; expected-exit={expectedShippingExit}; actual-exit={shipping.ExitCode}; diagnostics=[{string.Join(", ", diagnosticCodes)}]");
+    }
+
+    private void RunDisabledExactCase(string runRoot)
+    {
+        var repositoryRoot = Path.Combine(runRoot, "disabled-exact", "repository");
+        var activeFeed = Path.Combine(runRoot, "feeds", "disabled-exact-active");
+        WritePackage(Path.Combine(activeFeed, "Probe.DisabledExact.1.0.0.nupkg"), "Probe.DisabledExact", "active-wildcard");
+        Directory.CreateDirectory(repositoryRoot);
+        var configPath = Path.Combine(repositoryRoot, "NuGet.Config");
+        File.WriteAllText(
+            configPath,
+            $"<configuration><packageSources><clear /><add key=\"DisabledExact\" value=\"{SecurityElement.Escape(Path.Combine(runRoot, "feeds", "disabled-exact-exact"))}\" /><add key=\"ActiveWildcard\" value=\"{SecurityElement.Escape(activeFeed)}\" /></packageSources><disabledPackageSources><add key=\"DisabledExact\" value=\"true\" /></disabledPackageSources><packageSourceMapping><packageSource key=\"DisabledExact\"><package pattern=\"Probe.DisabledExact\" /></packageSource><packageSource key=\"ActiveWildcard\"><package pattern=\"*\" /></packageSource></packageSourceMapping></configuration>",
+            new UTF8Encoding(false));
+
+        var projectPath = Path.Combine(repositoryRoot, "ProbeProject.csproj");
+        WriteRestoreProject(projectPath, "Probe.DisabledExact");
+        var restore = RunRestore(projectPath, repositoryRoot, Path.Combine(runRoot, "packages", "disabled-exact"), null, runRoot);
+        Assert("disabled exact source is rejected by actual restore", restore.ExitCode != 0);
+
+        WriteSyntheticAssets(projectPath, "Probe.DisabledExact");
+        var shipping = RunShippingCheck(projectPath, null);
+        Assert("disabled exact shipping CLI reports no eligible source", shipping.ExitCode == 1 && shipping.Output.Contains("FF003", StringComparison.Ordinal));
+        Assert("disabled exact shipping CLI avoids reconciliation failure", !shipping.Output.Contains("could not be reconciled", StringComparison.Ordinal));
+        Console.WriteLine($"Shipping CLI equivalence: disabled exact + active wildcard; restore-exit={restore.ExitCode}; analyzer-exit={shipping.ExitCode}; diagnostics=[{string.Join(", ", Regex.Matches(shipping.Output, "FF\\d{3}").Select(match => match.Value).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))}]");
+        _observations.Add("disabled exact mapping: actual NuGet restore rejected the package and the shipping CLI reported FF003 after the same resolved-package fixture was supplied, without a reconciliation exception");
     }
 
     private string[] ProbeActualEligibleSources(
@@ -475,11 +533,79 @@ internal sealed class ProbeRunner
         return new RestoreResult(process.ExitCode, start.ElapsedMilliseconds, combined);
     }
 
+    private ProcessResult RunShippingCheck(string projectPath, string? configPath)
+    {
+        var processStart = new ProcessStartInfo
+        {
+            FileName = "dotnet",
+            WorkingDirectory = Path.GetDirectoryName(projectPath)!,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        processStart.Environment["KEELMATRIX_NO_TELEMETRY"] = "1";
+        processStart.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
+        processStart.ArgumentList.Add(_shippingTool);
+        processStart.ArgumentList.Add("check");
+        processStart.ArgumentList.Add(projectPath);
+        if (configPath is not null)
+        {
+            processStart.ArgumentList.Add("--config");
+            processStart.ArgumentList.Add(configPath);
+        }
+
+        using var process = Process.Start(processStart) ?? throw new InvalidOperationException("Unable to start the shipping FeedFence CLI.");
+        var standardOutput = process.StandardOutput.ReadToEnd();
+        var standardError = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return new ProcessResult(process.ExitCode, standardOutput + standardError);
+    }
+
+    private static void WriteSyntheticAssets(string projectPath, string packageId)
+    {
+        var projectDirectory = Path.GetDirectoryName(projectPath)!;
+        var objDirectory = Path.Combine(projectDirectory, "obj");
+        Directory.CreateDirectory(objDirectory);
+        var assets = new Dictionary<string, object>
+        {
+            ["version"] = 3,
+            ["targets"] = new Dictionary<string, object>
+            {
+                ["net8.0"] = new Dictionary<string, object>
+                {
+                    [$"{packageId}/1.0.0"] = new { }
+                }
+            },
+            ["libraries"] = new Dictionary<string, object>
+            {
+                [$"{packageId}/1.0.0"] = new { type = "package" }
+            }
+        };
+        File.WriteAllText(Path.Combine(objDirectory, "project.assets.json"), JsonSerializer.Serialize(assets), new UTF8Encoding(false));
+    }
+
     private static ISettings LoadHierarchySettings(string repositoryRoot, string runRoot)
     {
         var machineRoot = Path.Combine(runRoot, "machine-common");
         var machineSettings = Settings.LoadMachineWideSettings(machineRoot, "NuGet", "Config");
         return Settings.LoadDefaultSettings(repositoryRoot, null, new ExplicitMachineWideSettings(machineSettings));
+    }
+
+    private static string FindRepositoryRoot(string start)
+    {
+        var directory = new DirectoryInfo(Path.GetFullPath(start));
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "KeelMatrix.FeedFence.sln")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate the FeedFence repository root.");
     }
 
     private string ClassifyScope(string configPath, string repositoryRoot)
@@ -860,6 +986,8 @@ internal sealed record RestoreResult(int ExitCode, long DurationMs, string Outpu
 
 internal sealed record ControlledRestoreResult(bool Success, string? Marker);
 
+internal sealed record ProcessResult(int ExitCode, string Output);
+
 internal sealed class ExplicitMachineWideSettings : IMachineWideSettings
 {
     public ExplicitMachineWideSettings(ISettings settings)
@@ -882,6 +1010,8 @@ internal sealed class ProbeEnvironment : IDisposable
             ["USERPROFILE"] = Path.Combine(runRoot, "user-profile"),
             ["HOME"] = Path.Combine(runRoot, "user-profile"),
             ["NUGET_COMMON_APPLICATION_DATA"] = Path.Combine(runRoot, "machine-common"),
+            ["PROGRAMFILES(X86)"] = Path.Combine(runRoot, "machine-common"),
+            ["PROGRAMFILES"] = Path.Combine(runRoot, "machine-common"),
             ["NUGET_PACKAGES"] = Path.Combine(runRoot, "process-packages"),
             ["NUGET_HTTP_CACHE_PATH"] = Path.Combine(runRoot, "http-cache"),
             ["DOTNET_CLI_HOME"] = Path.Combine(runRoot, "dotnet-home"),

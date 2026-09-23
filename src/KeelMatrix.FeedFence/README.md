@@ -29,7 +29,7 @@ Use `--config <path>` to replace NuGet hierarchy discovery, `--policy <path>` fo
 
 Exit codes: `0` means analysis and policy passed, `1` means one or more policy violations, and `2` means invocation, environment, or analysis failure.
 
-Diagnostics are stable from `FF001` through `FF008`. Exact package IDs, prefix patterns, wildcard patterns, and equal-specificity outcomes follow NuGet Package Source Mapping semantics. Reports use safe source labels and normalized provenance labels; sensitive source keys are represented by stable opaque labels. Credentials, authenticated URLs, query strings, usernames, and full local paths are never printed. `FF008` is informational only.
+Diagnostics are stable from `FF001` through `FF008`. Exact package IDs, prefix patterns, wildcard patterns, equal-specificity outcomes, and case-insensitive source-key identity follow NuGet Package Source Mapping semantics. Case-only mapping/source-key differences are accepted; `FF004` is reserved for a mapping key with no configured source identity. Reports use safe source labels and normalized provenance labels; sensitive source keys are represented by stable opaque labels. Credentials, authenticated URLs, query strings, usernames, and full local paths are never printed. `FF008` is informational only.
 
 The optional repository-root `feedfence.json` supports source trust labels, protected/private package patterns, and narrow exceptions. Every exception must include a target and a non-empty reason. See the repository README for the complete policy schema and limitations.
 

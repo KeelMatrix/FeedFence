@@ -124,8 +124,32 @@ internal sealed class Fixture : IDisposable
 
         var casing = CreateCase("casing", ["Feed.Casing"],
             ["<packageSourceMapping><packageSource key=\"One\"><package pattern=\"Feed.Casing\" /></packageSource></packageSourceMapping>"], ["one"]);
-        AssertProcess(1, "check", casing.Project, "--config", casing.Config!);
-        AssertContains(Run("check", casing.Project, "--config", casing.Config!).Output, "FF004");
+        AssertProcess(0, "check", casing.Project, "--config", casing.Config!);
+        AssertNotContains(Run("check", casing.Project, "--config", casing.Config!).Output, "FF004");
+
+        var invalidMapping = CreateCase("invalid-mapping", ["Feed.Invalid"],
+            ["<packageSourceMapping><packageSource key=\"missing\"><package pattern=\"Feed.Invalid\" /></packageSource></packageSourceMapping>"], ["one"]);
+        var invalidMappingResult = Run("check", invalidMapping.Project, "--config", invalidMapping.Config!);
+        AssertEqual(1, invalidMappingResult.ExitCode, "invalid mapping source identity exit code");
+        AssertContains(invalidMappingResult.Output, "FF004");
+
+        var wildcardAmbiguity = CreateCase("wildcard-ambiguity", ["Company.Internal"],
+            ["<packageSourceMapping><packageSource key=\"left\"><package pattern=\"Company.*\" /></packageSource><packageSource key=\"right\"><package pattern=\"Company.*\" /></packageSource></packageSourceMapping>"], ["left", "right"]);
+        var wildcardAmbiguityResult = Run("check", wildcardAmbiguity.Project, "--config", wildcardAmbiguity.Config!);
+        AssertEqual(1, wildcardAmbiguityResult.ExitCode, "wildcard mapping ambiguity exit code");
+        AssertContains(wildcardAmbiguityResult.Output, "Company.*");
+
+        var disabledExact = CreateCase("disabled-exact", ["Feed.Disabled"], [], ["exact", "active"]);
+        File.WriteAllText(
+            disabledExact.Config!,
+            "<configuration><packageSources><clear /><add key=\"exact\" value=\"" + SecurityElement.Escape(Path.Combine(disabledExact.Root, "feeds", "exact")) + "\" /><add key=\"active\" value=\"" + SecurityElement.Escape(Path.Combine(disabledExact.Root, "feeds", "active")) + "\" /></packageSources><disabledPackageSources><add key=\"exact\" value=\"true\" /></disabledPackageSources><packageSourceMapping><packageSource key=\"exact\"><package pattern=\"Feed.Disabled\" /></packageSource><packageSource key=\"active\"><package pattern=\"*\" /></packageSource></packageSourceMapping></configuration>",
+            Encoding.UTF8);
+        var disabledExactResult = Run("check", disabledExact.Project, "--config", disabledExact.Config!);
+        AssertEqual(1, disabledExactResult.ExitCode, "disabled exact mapping exit code");
+        AssertContains(disabledExactResult.Output, "FF003");
+        AssertNotContains(disabledExactResult.Output, "could not be reconciled");
+
+        RunReadOnlyConfigurationCases();
 
         var inherited = CreateCase("inherited", ["Feed.Inherited"], [], ["one"]);
         var outsideConfig = Path.Combine(_root, "outside.config");
@@ -499,6 +523,7 @@ internal sealed class Fixture : IDisposable
     {
         var root = Path.Combine(_root, name);
         var projectDirectory = Path.Combine(root, "project");
+        Directory.CreateDirectory(Path.Combine(root, ".git"));
         Directory.CreateDirectory(Path.Combine(projectDirectory, "obj"));
         var project = Path.Combine(projectDirectory, "Project.csproj");
         File.WriteAllText(project, "<Project />", Encoding.UTF8);
@@ -525,7 +550,100 @@ internal sealed class Fixture : IDisposable
         return new(root, project, null, config);
     }
 
-    private ProcessResult Run(params string[] args)
+    private void RunReadOnlyConfigurationCases()
+    {
+        var isolatedEnvironment = CreateIsolatedNuGetEnvironment();
+        var userConfigDirectory = Path.Combine(isolatedEnvironment["APPDATA"]!, "NuGet");
+        var beforeHierarchy = Snapshot(userConfigDirectory);
+
+        var hierarchy = CreateCase("read-only-hierarchy", ["Feed.ReadOnly"], [], ["one"]);
+        var hierarchyResult = Run(isolatedEnvironment, "check", hierarchy.Project);
+        AssertEqual(0, hierarchyResult.ExitCode, "hierarchy read-only exit code");
+        AssertEqual(beforeHierarchy, Snapshot(userConfigDirectory), "hierarchy user config filesystem snapshot");
+        Console.WriteLine($"Read-only config case: hierarchy; userConfigCreated={(File.Exists(Path.Combine(userConfigDirectory, "NuGet.Config")) ? "yes" : "no")}; snapshot=unchanged");
+
+        var explicitCase = CreateCase("read-only-explicit", ["Feed.ReadOnlyExplicit"], [], ["one"]);
+        var beforeExplicit = Snapshot(userConfigDirectory);
+        var explicitResult = Run(isolatedEnvironment, "check", explicitCase.Project, "--config", explicitCase.Config!);
+        AssertEqual(0, explicitResult.ExitCode, "explicit read-only exit code");
+        AssertEqual(beforeExplicit, Snapshot(userConfigDirectory), "explicit user config filesystem snapshot");
+        Console.WriteLine($"Read-only config case: explicit --config; userConfigCreated={(File.Exists(Path.Combine(userConfigDirectory, "NuGet.Config")) ? "yes" : "no")}; snapshot=unchanged");
+
+        foreach (var budget in new[] { "size", "depth", "elements" })
+        {
+            var hierarchyBudget = CreateCase($"hierarchy-budget-{budget}", [], [], []);
+            WriteBudgetConfig(hierarchyBudget.Config!, budget);
+            var beforeBudget = Snapshot(userConfigDirectory);
+            var hierarchyBudgetResult = Run(isolatedEnvironment, "check", hierarchyBudget.Project);
+            AssertEqual(2, hierarchyBudgetResult.ExitCode, $"hierarchy {budget} budget exit code");
+            AssertContains(hierarchyBudgetResult.Output, "configuration file");
+            AssertEqual(beforeBudget, Snapshot(userConfigDirectory), $"hierarchy {budget} user config filesystem snapshot");
+
+            var explicitBudget = CreateCase($"explicit-budget-{budget}", [], [], []);
+            WriteBudgetConfig(explicitBudget.Config!, budget);
+            var explicitBudgetResult = Run(isolatedEnvironment, "check", explicitBudget.Project, "--config", explicitBudget.Config!);
+            AssertEqual(2, explicitBudgetResult.ExitCode, $"explicit {budget} budget exit code");
+            AssertContains(explicitBudgetResult.Output, "configuration file");
+            AssertEqual(beforeBudget, Snapshot(userConfigDirectory), $"explicit {budget} user config filesystem snapshot");
+            Console.WriteLine($"Config budget case: {budget}; hierarchy=exit {hierarchyBudgetResult.ExitCode}; explicit=exit {explicitBudgetResult.ExitCode}; userConfigSnapshot=unchanged");
+        }
+    }
+
+    private Dictionary<string, string?> CreateIsolatedNuGetEnvironment()
+    {
+        var appData = Path.Combine(_root, "isolated-appdata");
+        var programFiles = Path.Combine(_root, "isolated-program-files");
+        var dotnetHome = Path.Combine(_root, "isolated-dotnet-home");
+        Directory.CreateDirectory(appData);
+        Directory.CreateDirectory(programFiles);
+        Directory.CreateDirectory(dotnetHome);
+        return new Dictionary<string, string?>
+        {
+            ["APPDATA"] = appData,
+            ["PROGRAMFILES(X86)"] = programFiles,
+            ["PROGRAMFILES"] = programFiles,
+            ["DOTNET_CLI_HOME"] = dotnetHome,
+            ["DOTNET_SKIP_FIRST_TIME_EXPERIENCE"] = "1",
+            ["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1",
+            ["KEELMATRIX_NO_TELEMETRY"] = "1"
+        };
+    }
+
+    private static string Snapshot(string directory)
+    {
+        if (!Directory.Exists(directory))
+        {
+            return "<absent>";
+        }
+
+        return string.Join(
+            "\n",
+            Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.AllDirectories)
+                .Select(path =>
+                {
+                    var relative = Path.GetRelativePath(directory, path);
+                    return File.Exists(path)
+                        ? $"file:{relative}:{new FileInfo(path).Length}:{File.GetLastWriteTimeUtc(path).Ticks}"
+                        : $"directory:{relative}";
+                })
+                .Order(StringComparer.Ordinal));
+    }
+
+    private static void WriteBudgetConfig(string path, string budget)
+    {
+        var contents = budget switch
+        {
+            "size" => "<configuration>" + new string('x', 2 * 1024 * 1024) + "</configuration>",
+            "depth" => "<configuration>" + string.Concat(Enumerable.Repeat("<section>", 65)) + "value" + string.Concat(Enumerable.Repeat("</section>", 65)) + "</configuration>",
+            "elements" => "<configuration>" + string.Concat(Enumerable.Repeat("<section />", 100_001)) + "</configuration>",
+            _ => throw new ArgumentOutOfRangeException(nameof(budget))
+        };
+        File.WriteAllText(path, contents, Encoding.UTF8);
+    }
+
+    private ProcessResult Run(params string[] args) => Run(new Dictionary<string, string?>(), args);
+
+    private ProcessResult Run(IReadOnlyDictionary<string, string?> environment, params string[] args)
     {
         var startInfo = new ProcessStartInfo("dotnet")
         {
@@ -537,6 +655,17 @@ internal sealed class Fixture : IDisposable
         };
         startInfo.Environment["KEELMATRIX_NO_TELEMETRY"] = "1";
         startInfo.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
+        foreach (var entry in environment)
+        {
+            if (entry.Value is null)
+            {
+                startInfo.Environment.Remove(entry.Key);
+            }
+            else
+            {
+                startInfo.Environment[entry.Key] = entry.Value;
+            }
+        }
         startInfo.ArgumentList.Add(_tool);
         foreach (var arg in args)
         {

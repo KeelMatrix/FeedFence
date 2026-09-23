@@ -63,20 +63,17 @@ internal sealed class FeedFenceAnalyzer
 
         foreach (var mapping in configuration.Mappings)
         {
-            var exact = configuration.Sources.Any(source => string.Equals(source.Key, mapping.SourceKey, StringComparison.Ordinal));
-            var caseInsensitive = configuration.Sources.Any(source => string.Equals(source.Key, mapping.SourceKey, StringComparison.OrdinalIgnoreCase));
-            if (!exact)
+            var configuredSource = configuration.Sources.FirstOrDefault(source =>
+                string.Equals(source.Key, mapping.SourceKey, StringComparison.OrdinalIgnoreCase));
+            if (configuredSource is null)
             {
-                var suffix = caseInsensitive
-                    ? " The configured source key differs only by casing."
-                    : " No configured source has this key.";
                 AddDiagnostic(
                     diagnostics,
                     policy,
                     new Diagnostic(
                         "FF004",
                         DiagnosticSeverity.Violation,
-                        $"Mapping source key \"{RedactLabel(mapping.SourceKey)}\" does not match a configured source key exactly.{suffix}",
+                        $"Mapping source key \"{RedactLabel(mapping.SourceKey)}\" does not correspond to a configured source key.",
                         SourceKeys: [mapping.SourceKey]));
             }
         }
@@ -207,7 +204,21 @@ internal sealed class FeedFenceAnalyzer
         string.Join(", ", keys.Select(key => $"\"{RedactLabel(key)}\"").Order(StringComparer.Ordinal));
 
     private static string FormatPatterns(IEnumerable<string> patterns) =>
-        string.Join(", ", patterns.Select(pattern => $"\"{RedactLabel(pattern)}\"").Order(StringComparer.Ordinal));
+        string.Join(", ", patterns.Select(pattern => $"\"{FormatPattern(pattern)}\"").Order(StringComparer.Ordinal));
+
+    private static string FormatPattern(string value)
+    {
+        var normalized = new string(value.Where(character => !char.IsControl(character)).ToArray()).Trim();
+        if (normalized.Length > 0 &&
+            normalized.Length <= 128 &&
+            normalized.All(character => char.IsLetterOrDigit(character) || character is '.' or '_' or '-' or '*') &&
+            (!normalized.Contains('*') || normalized.EndsWith('*')))
+        {
+            return normalized;
+        }
+
+        return RedactLabel(normalized);
+    }
 
     private static bool IsInsecureHttpSource(string value)
     {
@@ -294,31 +305,17 @@ internal sealed class EffectiveConfig
     {
         try
         {
-            ISettings settings;
-            if (configPath is null)
+            var configPaths = configPath is null
+                ? DiscoverHierarchyConfigPaths(restoreContext)
+                : [GetExplicitConfigPath(configPath)];
+
+            foreach (var path in configPaths)
             {
-                settings = Settings.LoadDefaultSettings(restoreContext);
-            }
-            else
-            {
-                var fullConfigPath = SafeFullPath(configPath);
-                EnsureFile(fullConfigPath, "NuGet configuration");
-                ValidateXmlFile(fullConfigPath, InputLimits.MaxConfigBytes);
-                settings = Settings.LoadSettingsGivenConfigPaths([fullConfigPath]);
+                ValidateXmlFile(path, InputLimits.MaxConfigBytes);
             }
 
-            if (settings is not Settings concreteSettings)
-            {
-                throw new AnalysisException("NuGet configuration did not return a supported settings object.");
-            }
-
-            foreach (var path in concreteSettings.GetConfigFilePaths().Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                if (File.Exists(path))
-                {
-                    ValidateXmlFile(path, InputLimits.MaxConfigBytes);
-                }
-            }
+            using var settingsLoadingContext = new SettingsLoadingContext();
+            var settings = Settings.LoadImmutableSettingsGivenConfigPaths(configPaths.ToList(), settingsLoadingContext);
 
             var packageSourceItems = settings.GetSection("packageSources")?.Items.OfType<SourceItem>().ToArray() ?? [];
             var loadedSources = new PackageSourceProvider(settings).LoadPackageSources().ToArray();
@@ -386,9 +383,9 @@ internal sealed class EffectiveConfig
             }
 
             var configuredNames = _mapping.GetConfiguredPackageSources(packageId);
-            var configuredActiveSources = configuredNames
+            var configuredSources = configuredNames
                 .Select(name => Sources.FirstOrDefault(source =>
-                    source.IsEnabled && string.Equals(source.Key, name, StringComparison.OrdinalIgnoreCase)))
+                    string.Equals(source.Key, name, StringComparison.OrdinalIgnoreCase)))
                 .Where(source => source is not null)
                 .Cast<SourceInfo>()
                 .DistinctBy(source => source.Key, StringComparer.OrdinalIgnoreCase)
@@ -398,7 +395,7 @@ internal sealed class EffectiveConfig
                 .Select(mapping => new MatchedPattern(
                     mapping,
                     Sources.FirstOrDefault(source =>
-                        source.IsEnabled && string.Equals(source.Key, mapping.SourceKey, StringComparison.OrdinalIgnoreCase)),
+                        string.Equals(source.Key, mapping.SourceKey, StringComparison.OrdinalIgnoreCase)),
                     PatternMatcher.Specificity(mapping.Pattern)))
                 .Where(item => item.Source is not null)
                 .ToArray();
@@ -419,14 +416,14 @@ internal sealed class EffectiveConfig
                     .Order(StringComparer.Ordinal)
                     .ToArray();
 
-            var configuredSet = configuredActiveSources.Select(source => source.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var configuredSet = configuredSources.Select(source => source.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var winnerSet = winners.Select(source => source.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (!configuredSet.SetEquals(winnerSet))
             {
                 throw new AnalysisException("NuGet Package Source Mapping returned an eligibility set that could not be reconciled with its documented specificity rules.");
             }
 
-            return new(configuredActiveSources.OrderBy(source => source.Key, StringComparer.Ordinal).ToArray(), winningPatterns);
+            return new(winners.Where(source => source.IsEnabled).OrderBy(source => source.Key, StringComparer.Ordinal).ToArray(), winningPatterns);
         }
         catch (AnalysisException)
         {
@@ -488,6 +485,126 @@ internal sealed class EffectiveConfig
         {
             throw new AnalysisException($"the supplied {kind} could not be read.");
         }
+    }
+
+    private static string GetExplicitConfigPath(string configPath)
+    {
+        var fullConfigPath = SafeFullPath(configPath);
+        EnsureFile(fullConfigPath, "NuGet configuration");
+        return fullConfigPath;
+    }
+
+    private static string[] DiscoverHierarchyConfigPaths(string restoreContext)
+    {
+        var paths = new List<string>();
+        var comparer = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+
+        var current = SafeFullPath(restoreContext);
+        while (!string.IsNullOrWhiteSpace(current))
+        {
+            var configPath = Settings.OrderedSettingsFileNames
+                .Select(fileName => Path.Combine(current, fileName))
+                .FirstOrDefault(File.Exists);
+            if (configPath is not null)
+            {
+                paths.Add(configPath);
+            }
+
+            var parent = Directory.GetParent(current);
+            if (parent is null)
+            {
+                break;
+            }
+
+            current = parent.FullName;
+        }
+
+        var userSettingsDirectory = GetUserSettingsDirectory();
+        if (userSettingsDirectory is not null)
+        {
+            AddIfFileExists(paths, Path.Combine(userSettingsDirectory, Settings.DefaultSettingsFileName));
+            var additionalDirectory = Path.Combine(userSettingsDirectory, "config");
+            if (Directory.Exists(additionalDirectory))
+            {
+                foreach (var pattern in Settings.SupportedMachineWideConfigExtension)
+                {
+                    paths.AddRange(Directory.EnumerateFiles(additionalDirectory, pattern, SearchOption.TopDirectoryOnly)
+                        .Where(path => !comparer.Equals(Path.GetFileName(path), Settings.DefaultSettingsFileName))
+                        .Order(comparer));
+                }
+            }
+        }
+
+        var machineConfigDirectory = GetMachineConfigDirectory();
+        if (machineConfigDirectory is not null && Directory.Exists(machineConfigDirectory))
+        {
+            foreach (var pattern in Settings.SupportedMachineWideConfigExtension)
+            {
+                paths.AddRange(Directory.EnumerateFiles(machineConfigDirectory, pattern, SearchOption.TopDirectoryOnly)
+                    .Order(comparer));
+            }
+        }
+
+        return paths.Distinct(comparer).ToArray();
+    }
+
+    private static void AddIfFileExists(List<string> paths, string path)
+    {
+        if (File.Exists(path))
+        {
+            paths.Add(path);
+        }
+    }
+
+    private static string? GetUserSettingsDirectory()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var appData = Environment.GetEnvironmentVariable("APPDATA");
+            if (string.IsNullOrWhiteSpace(appData))
+            {
+                appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            }
+
+            return string.IsNullOrWhiteSpace(appData) ? null : Path.Combine(appData, "NuGet");
+        }
+
+        var home = Environment.GetEnvironmentVariable("DOTNET_CLI_HOME");
+        if (string.IsNullOrWhiteSpace(home))
+        {
+            home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        }
+
+        return string.IsNullOrWhiteSpace(home) ? null : Path.Combine(home, ".nuget", "NuGet");
+    }
+
+    private static string? GetMachineConfigDirectory()
+    {
+        string? root;
+        if (OperatingSystem.IsWindows())
+        {
+            root = Environment.GetEnvironmentVariable("PROGRAMFILES(X86)");
+            if (string.IsNullOrWhiteSpace(root))
+            {
+                root = Environment.GetEnvironmentVariable("PROGRAMFILES");
+            }
+        }
+        else if (OperatingSystem.IsMacOS())
+        {
+            root = "/Library/Application Support";
+        }
+        else
+        {
+            root = Environment.GetEnvironmentVariable("NUGET_COMMON_APPLICATION_DATA");
+            if (string.IsNullOrWhiteSpace(root))
+            {
+                root = "/etc/opt";
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(root) ? null : Path.Combine(root, "NuGet", "Config");
     }
 }
 

@@ -9,7 +9,7 @@ synthetic local file feeds and configuration values.
   duplicate eligibility.
 - `clear/` proves repository `<clear />` behavior.
 - `nomapping/` proves multiple active sources without mapping.
-- `casing/` proves a source-key casing mismatch.
+- `casing/` proves that a case-variant mapping source key follows current NuGet matching behavior.
 - `explicit/` proves an explicit config override.
 - `provenance/` proves nested, missing-user, outside-repository, and
   external-explicit-config provenance cases.
