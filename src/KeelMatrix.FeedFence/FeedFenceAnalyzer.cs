@@ -583,7 +583,12 @@ internal sealed class EffectiveConfig
     private static string? GetMachineConfigDirectory()
     {
         string? root;
-        if (OperatingSystem.IsWindows())
+        var commonApplicationData = Environment.GetEnvironmentVariable("NUGET_COMMON_APPLICATION_DATA");
+        if (!string.IsNullOrWhiteSpace(commonApplicationData) && !OperatingSystem.IsWindows())
+        {
+            root = commonApplicationData;
+        }
+        else if (OperatingSystem.IsWindows())
         {
             root = Environment.GetEnvironmentVariable("PROGRAMFILES(X86)");
             if (string.IsNullOrWhiteSpace(root))
@@ -597,11 +602,7 @@ internal sealed class EffectiveConfig
         }
         else
         {
-            root = Environment.GetEnvironmentVariable("NUGET_COMMON_APPLICATION_DATA");
-            if (string.IsNullOrWhiteSpace(root))
-            {
-                root = "/etc/opt";
-            }
+            root = "/etc/opt";
         }
 
         return string.IsNullOrWhiteSpace(root) ? null : Path.Combine(root, "NuGet", "Config");
