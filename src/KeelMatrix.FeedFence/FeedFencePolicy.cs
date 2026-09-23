@@ -190,8 +190,8 @@ internal sealed class FeedFencePolicy
 
             var code = ReadString(element, "code");
             var reason = ReadString(element, "reason");
-            var packagePattern = ReadString(element, "packagePattern") ?? ReadString(element, "pattern");
-            var sourceKey = ReadString(element, "sourceKey") ?? ReadString(element, "source");
+            var packagePattern = ReadSelector(element, "packagePattern", "pattern", "package pattern");
+            var sourceKey = ReadSelector(element, "sourceKey", "source", "source key");
             if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(reason) ||
                 (string.IsNullOrWhiteSpace(packagePattern) && string.IsNullOrWhiteSpace(sourceKey)))
             {
@@ -216,9 +216,33 @@ internal sealed class FeedFencePolicy
 
     private static string? ReadString(JsonElement objectElement, string propertyName)
     {
-        return objectElement.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
-            ? property.GetString()
-            : null;
+        if (!objectElement.TryGetProperty(propertyName, out var property))
+        {
+            return null;
+        }
+
+        if (property.ValueKind != JsonValueKind.String)
+        {
+            throw new AnalysisException($"FeedFence policy property '{propertyName}' must be a string.");
+        }
+
+        return property.GetString();
+    }
+
+    private static string? ReadSelector(JsonElement objectElement, string primaryName, string aliasName, string label)
+    {
+        var hasPrimary = objectElement.TryGetProperty(primaryName, out _);
+        var hasAlias = objectElement.TryGetProperty(aliasName, out _);
+        if (hasPrimary && hasAlias)
+        {
+            throw new AnalysisException($"FeedFence policy exception contains conflicting {label} selectors.");
+        }
+
+        return hasPrimary
+            ? ReadString(objectElement, primaryName)
+            : hasAlias
+                ? ReadString(objectElement, aliasName)
+                : null;
     }
 
     private static string?[] ReadStringArray(JsonElement objectElement, string propertyName)
@@ -271,6 +295,8 @@ internal sealed record PolicyException(string Code, string? PackagePattern, stri
             return false;
         }
 
-        return SourceKey is null || diagnostic.SourceKeys?.Any(key => string.Equals(key, SourceKey, StringComparison.OrdinalIgnoreCase)) == true;
+        return SourceKey is null ||
+            (diagnostic.SourceKeys is { Count: > 0 } sourceKeys &&
+             sourceKeys.All(key => string.Equals(key, SourceKey, StringComparison.OrdinalIgnoreCase)));
     }
 }

@@ -4,6 +4,16 @@ namespace KeelMatrix.FeedFence;
 
 internal static class RestoreGraphReader
 {
+    private static readonly HashSet<string> ValidLibraryTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "package",
+        "project",
+        "externalProject",
+        "assembly",
+        "reference",
+        "winmd"
+    };
+
     public static IReadOnlyList<string> ReadFromProjects(IReadOnlyList<string> projectPaths)
     {
         var packages = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -69,10 +79,23 @@ internal static class RestoreGraphReader
                     throw new AnalysisException("project.assets.json contains too many target library references.");
                 }
 
-                if (targetLibrary.Name.Contains('/'))
+                if (!targetLibrary.Name.Contains('/'))
                 {
-                    targetLibraryNames.Add(targetLibrary.Name);
+                    throw new AnalysisException("project.assets.json contains an invalid target library identity.");
                 }
+
+                if (targetLibrary.Value.ValueKind != JsonValueKind.Object)
+                {
+                    throw new AnalysisException($"project.assets.json target library '{targetLibrary.Name}' is malformed.");
+                }
+
+                targetLibraryNames.Add(targetLibrary.Name);
+                if (!libraries.TryGetProperty(targetLibrary.Name, out var libraryRecord))
+                {
+                    throw new AnalysisException($"project.assets.json is incomplete; target library '{targetLibrary.Name}' has no library record.");
+                }
+
+                ValidateLibraryRecord(targetLibrary.Name, libraryRecord);
             }
         }
 
@@ -80,9 +103,9 @@ internal static class RestoreGraphReader
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var library in libraries.EnumerateObject())
         {
-            if (library.Value.ValueKind != JsonValueKind.Object ||
-                !library.Value.TryGetProperty("type", out var type) ||
-                !string.Equals(type.GetString(), "package", StringComparison.OrdinalIgnoreCase))
+            ValidateLibraryRecord(library.Name, library.Value);
+            var type = library.Value.GetProperty("type").GetString()!;
+            if (!string.Equals(type, "package", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
@@ -106,6 +129,18 @@ internal static class RestoreGraphReader
         }
 
         return result;
+    }
+
+    private static void ValidateLibraryRecord(string identity, JsonElement library)
+    {
+        if (library.ValueKind != JsonValueKind.Object ||
+            !library.TryGetProperty("type", out var type) ||
+            type.ValueKind != JsonValueKind.String ||
+            type.GetString() is not { } typeValue ||
+            !ValidLibraryTypes.Contains(typeValue))
+        {
+            throw new AnalysisException($"project.assets.json library record '{identity}' has invalid type data.");
+        }
     }
 
     private static HashSet<string> ReadLockFile(string path)

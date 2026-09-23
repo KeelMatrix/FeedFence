@@ -12,7 +12,7 @@ internal sealed class FeedFenceAnalyzer
     public static AnalysisResult Analyze(CliOptions options)
     {
         var target = TargetResolver.Resolve(options.TargetPath);
-        var configuration = EffectiveConfig.Load(target.RepositoryRoot, options.ConfigPath);
+        var configuration = EffectiveConfig.Load(target.RestoreContext, target.RepositoryRoot, options.ConfigPath);
         var policy = FeedFencePolicy.Load(target.RepositoryRoot, options.PolicyPath);
         var packageIds = RestoreGraphReader.ReadFromProjects(target.ProjectPaths);
         if (packageIds.Count > 0 && configuration.ActiveSources.Count == 0)
@@ -170,15 +170,18 @@ internal sealed class FeedFenceAnalyzer
             }
 
             var kind = rule.IsPrivate ? "private" : "protected";
-            AddDiagnostic(
-                diagnostics,
-                policy,
-                new Diagnostic(
-                    "FF007",
-                    DiagnosticSeverity.Violation,
-                    $"{kind} package \"{packageId}\" can resolve from source keys {FormatSourceKeys(outsideAllowedSources)} outside its declared trust set (pattern \"{rule.Pattern}\").",
-                    packageId,
-                    outsideAllowedSources.Select(source => source.Key).ToArray()));
+            foreach (var source in outsideAllowedSources)
+            {
+                AddDiagnostic(
+                    diagnostics,
+                    policy,
+                    new Diagnostic(
+                        "FF007",
+                        DiagnosticSeverity.Violation,
+                        $"{kind} package \"{packageId}\" can resolve from source key \"{RedactLabel(source.Key)}\" outside its declared trust set (pattern \"{rule.Pattern}\").",
+                        packageId,
+                        [source.Key]));
+            }
         }
     }
 
@@ -287,14 +290,14 @@ internal sealed class EffectiveConfig
     public IReadOnlyList<MappingPattern> Mappings { get; }
     public bool MappingEnabled => _mapping.IsEnabled;
 
-    public static EffectiveConfig Load(string repositoryRoot, string? configPath)
+    public static EffectiveConfig Load(string restoreContext, string repositoryRoot, string? configPath)
     {
         try
         {
             ISettings settings;
             if (configPath is null)
             {
-                settings = Settings.LoadDefaultSettings(repositoryRoot);
+                settings = Settings.LoadDefaultSettings(restoreContext);
             }
             else
             {
@@ -595,8 +598,14 @@ internal static class PatternMatcher
 internal static class TargetResolver
 {
     private static readonly Regex SolutionProjectLine = new(
-        "^Project\\(.*\\)\\s*=\\s*\"[^\"]+\",\\s*\"(?<path>[^\"]+\\.csproj)\"",
+        "^Project\\(.*\\)\\s*=\\s*\"[^\"]+\",\\s*\"(?<path>[^\"]+)\"",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    private static readonly HashSet<string> SupportedProjectExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".csproj",
+        ".fsproj",
+        ".vbproj"
+    };
 
     public static ProjectTarget Resolve(string? suppliedPath)
     {
@@ -621,7 +630,12 @@ internal static class TargetResolver
 
             if (extension.Equals(".csproj", StringComparison.OrdinalIgnoreCase))
             {
-                return new(FindRepositoryRoot(Path.GetDirectoryName(fullInput)!), [fullInput]);
+                return new(FindRepositoryRoot(Path.GetDirectoryName(fullInput)!), [fullInput], Path.GetDirectoryName(fullInput)!);
+            }
+
+            if (SupportedProjectExtensions.Contains(extension))
+            {
+                return new(FindRepositoryRoot(Path.GetDirectoryName(fullInput)!), [fullInput], Path.GetDirectoryName(fullInput)!);
             }
 
             throw new InvocationException("the supplied path must identify a solution or project.");
@@ -638,14 +652,15 @@ internal static class TargetResolver
             return ResolveSolution(solutions[0]);
         }
 
-        var projects = Directory.EnumerateFiles(fullInput, "*.csproj", SearchOption.AllDirectories)
+        var projects = SupportedProjectExtensions
+            .SelectMany(extension => Directory.EnumerateFiles(fullInput, "*" + extension, SearchOption.AllDirectories))
             .Where(path => !path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
                 .Any(part => part is "bin" or "obj"))
             .ToArray();
         return projects.Length switch
         {
             0 => throw new InvocationException("the current directory contains no solution or project."),
-            1 => new(FindRepositoryRoot(fullInput), projects),
+            1 => new(FindRepositoryRoot(fullInput), projects, Path.GetDirectoryName(projects[0])!),
             _ => throw new InvocationException("the current directory contains multiple projects; supply one solution or project path.")
         };
     }
@@ -653,19 +668,30 @@ internal static class TargetResolver
     private static ProjectTarget ResolveSolution(string solutionPath)
     {
         var solutionDirectory = Path.GetDirectoryName(solutionPath)!;
-        var projects = File.ReadLines(solutionPath)
+        var declaredProjects = File.ReadLines(solutionPath)
             .Select(line => SolutionProjectLine.Match(line))
             .Where(match => match.Success)
             .Select(match => Path.GetFullPath(Path.Combine(solutionDirectory, match.Groups["path"].Value.Replace('\\', Path.DirectorySeparatorChar))))
-            .Where(File.Exists)
+            .Where(path => !string.IsNullOrEmpty(Path.GetExtension(path)))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        if (projects.Length == 0)
+
+        if (declaredProjects.Any(path => !SupportedProjectExtensions.Contains(Path.GetExtension(path))))
+        {
+            throw new InvocationException("the supplied solution declares an unsupported project member.");
+        }
+
+        if (declaredProjects.Any(path => !File.Exists(path)))
+        {
+            throw new InvocationException("the supplied solution declares a project member that could not be read.");
+        }
+
+        if (declaredProjects.Length == 0)
         {
             throw new InvocationException("the supplied solution contains no readable projects.");
         }
 
-        return new(FindRepositoryRoot(solutionDirectory), projects);
+        return new(FindRepositoryRoot(solutionDirectory), declaredProjects, solutionDirectory);
     }
 
     private static string FindRepositoryRoot(string start)
@@ -673,7 +699,8 @@ internal static class TargetResolver
         var directory = new DirectoryInfo(start);
         while (directory is not null)
         {
-            if (Directory.Exists(Path.Combine(directory.FullName, ".git")))
+            var gitMarker = Path.Combine(directory.FullName, ".git");
+            if (Directory.Exists(gitMarker) || File.Exists(gitMarker))
             {
                 return directory.FullName;
             }

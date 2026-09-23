@@ -51,13 +51,13 @@ internal sealed class Fixture : IDisposable
                 "<packageSourceMapping><packageSource key=\"exact\"><package pattern=\"Feed.Exact\" /></packageSource><packageSource key=\"prefix\"><package pattern=\"Feed.Prefix.*\" /></packageSource><packageSource key=\"wildcard\"><package pattern=\"*\" /></packageSource></packageSourceMapping>",
             ],
             ["exact", "prefix", "wildcard"]);
-        AssertProcess(0, "check", specificity.Project, "--config", specificity.Config);
-        var specificityOutput = Run("check", specificity.Project, "--config", specificity.Config).Output;
+        AssertProcess(0, "check", specificity.Project, "--config", specificity.Config!);
+        var specificityOutput = Run("check", specificity.Project, "--config", specificity.Config!).Output;
         AssertContains(specificityOutput, "No restore-source policy violations found.");
         AssertNotContains(specificityOutput, "FF002");
         AssertContains(specificityOutput, "FF008");
 
-        var json = Run("check", specificity.Project, "--config", specificity.Config, "--format", "json");
+        var json = Run("check", specificity.Project, "--config", specificity.Config!, "--format", "json");
         AssertEqual(0, json.ExitCode, "JSON exit code");
         AssertNotContains(json.StandardError, "noise");
         AssertEqual(string.Empty, json.StandardError, "JSON stderr");
@@ -68,10 +68,10 @@ internal sealed class Fixture : IDisposable
             AssertEqual("FF008", jsonDocument.RootElement.GetProperty("diagnostics").EnumerateArray().Single(diagnostic => diagnostic.GetProperty("code").GetString() == "FF008").GetProperty("code").GetString(), "JSON diagnostic identity");
         }
 
-        var jsonRepeat = Run("check", specificity.Project, "--config", specificity.Config, "--format", "json");
+        var jsonRepeat = Run("check", specificity.Project, "--config", specificity.Config!, "--format", "json");
         AssertEqual(json.StandardOutput, jsonRepeat.StandardOutput, "JSON byte determinism");
 
-        var sarif = Run("check", specificity.Project, "--config", specificity.Config, "--format", "sarif");
+        var sarif = Run("check", specificity.Project, "--config", specificity.Config!, "--format", "sarif");
         AssertEqual(0, sarif.ExitCode, "SARIF exit code");
         AssertEqual(string.Empty, sarif.StandardError, "SARIF stderr");
         using (var sarifDocument = JsonDocument.Parse(sarif.StandardOutput))
@@ -81,7 +81,7 @@ internal sealed class Fixture : IDisposable
             AssertEqual("FF008", sarifDocument.RootElement.GetProperty("runs")[0].GetProperty("results").EnumerateArray().Single(result => result.GetProperty("ruleId").GetString() == "FF008").GetProperty("ruleId").GetString(), "SARIF result identity");
         }
 
-        var sarifRepeat = Run("check", specificity.Project, "--config", specificity.Config, "--format", "sarif");
+        var sarifRepeat = Run("check", specificity.Project, "--config", specificity.Config!, "--format", "sarif");
         AssertEqual(sarif.StandardOutput, sarifRepeat.StandardOutput, "SARIF byte determinism");
 
         var telemetryResult = new AnalysisResult(
@@ -110,39 +110,39 @@ internal sealed class Fixture : IDisposable
                 "<packageSourceMapping><packageSource key=\"left\"><package pattern=\"Feed.Equal\" /></packageSource><packageSource key=\"right\"><package pattern=\"Feed.Equal\" /></packageSource></packageSourceMapping>",
             ],
             ["left", "right"]);
-        AssertProcess(1, "check", equal.Project, "--config", equal.Config);
-        AssertContains(Run("check", equal.Project, "--config", equal.Config).Output, "FF002");
+        AssertProcess(1, "check", equal.Project, "--config", equal.Config!);
+        AssertContains(Run("check", equal.Project, "--config", equal.Config!).Output, "FF002");
 
         var noMapping = CreateCase("nomapping", ["Feed.One"], [], ["one", "two"]);
-        AssertProcess(1, "check", noMapping.Project, "--config", noMapping.Config);
-        AssertContains(Run("check", noMapping.Project, "--config", noMapping.Config).Output, "FF001");
+        AssertProcess(1, "check", noMapping.Project, "--config", noMapping.Config!);
+        AssertContains(Run("check", noMapping.Project, "--config", noMapping.Config!).Output, "FF001");
 
         var unmapped = CreateCase("unmapped", ["Feed.Unmapped"],
             ["<packageSourceMapping><packageSource key=\"one\"><package pattern=\"Other.*\" /></packageSource></packageSourceMapping>"], ["one"]);
-        AssertProcess(1, "check", unmapped.Project, "--config", unmapped.Config);
-        AssertContains(Run("check", unmapped.Project, "--config", unmapped.Config).Output, "FF003");
+        AssertProcess(1, "check", unmapped.Project, "--config", unmapped.Config!);
+        AssertContains(Run("check", unmapped.Project, "--config", unmapped.Config!).Output, "FF003");
 
         var casing = CreateCase("casing", ["Feed.Casing"],
             ["<packageSourceMapping><packageSource key=\"One\"><package pattern=\"Feed.Casing\" /></packageSource></packageSourceMapping>"], ["one"]);
-        AssertProcess(1, "check", casing.Project, "--config", casing.Config);
-        AssertContains(Run("check", casing.Project, "--config", casing.Config).Output, "FF004");
+        AssertProcess(1, "check", casing.Project, "--config", casing.Config!);
+        AssertContains(Run("check", casing.Project, "--config", casing.Config!).Output, "FF004");
 
         var inherited = CreateCase("inherited", ["Feed.Inherited"], [], ["one"]);
         var outsideConfig = Path.Combine(_root, "outside.config");
-        File.Copy(inherited.Config, outsideConfig);
+        File.Copy(inherited.Config!, outsideConfig);
         AssertProcess(0, "check", inherited.Project, "--config", outsideConfig);
         AssertProcess(1, "check", inherited.Project, "--config", outsideConfig, "--strict");
         AssertContains(Run("check", inherited.Project, "--config", outsideConfig).Output, "external inherited configuration");
 
         var insecure = CreateCase("insecure", ["Feed.Insecure"], [], ["one"], "http://user:secret@example.invalid/v3/index.json?token=private");
-        var insecureOutput = Run("check", insecure.Project, "--config", insecure.Config);
+        var insecureOutput = Run("check", insecure.Project, "--config", insecure.Config!);
         AssertEqual(1, insecureOutput.ExitCode, "insecure source exit code");
         AssertContains(insecureOutput.Output, "FF006");
         AssertNotContains(insecureOutput.Output, "secret");
         AssertNotContains(insecureOutput.Output, "token=private");
 
         var paddedHttp = CreateCase("padded-http", ["Feed.Http"], [], ["http"], "  http://example.invalid/v3/index.json  ");
-        var paddedHttpResult = Run("check", paddedHttp.Project, "--config", paddedHttp.Config);
+        var paddedHttpResult = Run("check", paddedHttp.Project, "--config", paddedHttp.Config!);
         AssertEqual(1, paddedHttpResult.ExitCode, "whitespace-padded HTTP source exit code");
         AssertContains(paddedHttpResult.Output, "FF006");
 
@@ -174,7 +174,7 @@ internal sealed class Fixture : IDisposable
         var sensitiveSource = CreateCase("sensitive-source-key", ["Feed.Secret"], [], [sensitiveSourceKey, "safe"], "https://feed.example.invalid/index.json");
         foreach (var format in new[] { "text", "json", "sarif" })
         {
-            var sensitiveResult = Run("check", sensitiveSource.Project, "--config", sensitiveSource.Config, "--format", format);
+            var sensitiveResult = Run("check", sensitiveSource.Project, "--config", sensitiveSource.Config!, "--format", format);
             AssertContains(sensitiveResult.Output, "source-");
             AssertNotContains(sensitiveResult.Output, "https://user:password@example.invalid/nuget/index.json?token=topsecret");
             AssertNotContains(sensitiveResult.Output, "user");
@@ -186,14 +186,14 @@ internal sealed class Fixture : IDisposable
         var protectedCase = CreateCase("protected", ["Company.Internal"], [], ["public"]);
         var policy = Path.Combine(protectedCase.Root, "feedfence.json");
         File.WriteAllText(policy, "{\"version\":1,\"sourceTrust\":{\"public\":\"public\"},\"privatePackages\":[\"Company.*\"]}", Encoding.UTF8);
-        AssertProcess(1, "check", protectedCase.Project, "--config", protectedCase.Config, "--policy", policy);
+        AssertProcess(1, "check", protectedCase.Project, "--config", protectedCase.Config!, "--policy", policy);
         var exceptionPolicy = Path.Combine(protectedCase.Root, "exception.json");
         File.WriteAllText(exceptionPolicy, "{\"version\":1,\"sourceTrust\":{\"public\":\"public\"},\"privatePackages\":[\"Company.*\"],\"exceptions\":[{\"code\":\"FF007\",\"packagePattern\":\"Company.Internal\",\"sourceKey\":\"public\",\"reason\":\"synthetic test exception\"}]}", Encoding.UTF8);
-        AssertProcess(0, "check", protectedCase.Project, "--config", protectedCase.Config, "--policy", exceptionPolicy);
+        AssertProcess(0, "check", protectedCase.Project, "--config", protectedCase.Config!, "--policy", exceptionPolicy);
 
         var malformedPolicy = Path.Combine(_root, "malformed-policy.json");
         File.WriteAllText(malformedPolicy, "{\"exceptions\":[{\"code\":\"FF005\"}]}", Encoding.UTF8);
-        var malformed = Run("check", specificity.Project, "--config", specificity.Config, "--policy", malformedPolicy);
+        var malformed = Run("check", specificity.Project, "--config", specificity.Config!, "--policy", malformedPolicy);
         AssertEqual(2, malformed.ExitCode, "malformed policy exit code");
         AssertEqual(string.Empty, malformed.StandardOutput, "malformed policy stdout");
         AssertContains(malformed.StandardError, "Analysis error");
@@ -202,7 +202,7 @@ internal sealed class Fixture : IDisposable
         var missing = Path.Combine(_root, "missing");
         Directory.CreateDirectory(missing);
         File.WriteAllText(Path.Combine(missing, "Project.csproj"), "<Project />", Encoding.UTF8);
-        var missingResult = Run("check", Path.Combine(missing, "Project.csproj"), "--config", specificity.Config);
+        var missingResult = Run("check", Path.Combine(missing, "Project.csproj"), "--config", specificity.Config!);
         AssertEqual(2, missingResult.ExitCode, "missing restore artifact exit code");
         AssertEqual(string.Empty, missingResult.StandardOutput, "missing artifact stdout");
         AssertContains(missingResult.StandardError, "Analysis error");
@@ -218,7 +218,7 @@ internal sealed class Fixture : IDisposable
 
         var disagreement = Path.Combine(Path.GetDirectoryName(specificity.Project)!, "packages.lock.json");
         File.WriteAllText(disagreement, "{\"version\":2,\"dependencies\":{\"net8.0\":{\"Different.Package\":{\"resolved\":\"1.0.0\"}}}}", Encoding.UTF8);
-        var disagreementResult = Run("check", specificity.Project, "--config", specificity.Config);
+        var disagreementResult = Run("check", specificity.Project, "--config", specificity.Config!);
         AssertEqual(2, disagreementResult.ExitCode, "assets/lock disagreement exit code");
         AssertContains(disagreementResult.Output, "project.assets.json and packages.lock.json disagree");
 
@@ -229,18 +229,18 @@ internal sealed class Fixture : IDisposable
         AssertNotContains(dtdResult.Output, "not-used");
 
         var incompleteAssets = CreateCase("incomplete-assets", ["Feed.Incomplete"], [], ["one"], coherentTargets: false);
-        var incompleteAssetsResult = Run("check", incompleteAssets.Project, "--config", incompleteAssets.Config);
+        var incompleteAssetsResult = Run("check", incompleteAssets.Project, "--config", incompleteAssets.Config!);
         AssertEqual(2, incompleteAssetsResult.ExitCode, "incomplete assets graph exit code");
         AssertContains(incompleteAssetsResult.Output, "package library is not present in any target framework");
 
         var zeroSources = CreateCase("zero-sources", ["Feed.NoSource"], [], []);
-        var zeroSourcesResult = Run("check", zeroSources.Project, "--config", zeroSources.Config);
+        var zeroSourcesResult = Run("check", zeroSources.Project, "--config", zeroSources.Config!);
         AssertEqual(2, zeroSourcesResult.ExitCode, "zero-source nonempty graph exit code");
         AssertContains(zeroSourcesResult.Output, "no active package sources");
 
         var symlinkCase = CreateCase("symlink-config", ["Feed.Symlink"], [], ["one"]);
         var symlinkTarget = Path.Combine(_root, "symlink-target.config");
-        File.Copy(symlinkCase.Config, symlinkTarget);
+        File.Copy(symlinkCase.Config!, symlinkTarget);
         var symlinkConfig = Path.Combine(Path.GetDirectoryName(symlinkCase.Project)!, "NuGet.config");
         File.CreateSymbolicLink(symlinkConfig, symlinkTarget);
         var symlinkResult = Run("check", symlinkCase.Project, "--config", symlinkConfig, "--format", "json");
@@ -253,9 +253,235 @@ internal sealed class Fixture : IDisposable
 
         var highCardinalityPackages = Enumerable.Range(0, 50_001).Select(index => $"Feed.Package{index:00000}").ToArray();
         var highCardinality = CreateCase("high-cardinality", highCardinalityPackages, [], ["one"]);
-        var highCardinalityResult = Run("check", highCardinality.Project, "--config", highCardinality.Config);
+        var highCardinalityResult = Run("check", highCardinality.Project, "--config", highCardinality.Config!);
         AssertEqual(2, highCardinalityResult.ExitCode, "high-cardinality assets exit code");
         AssertContains(highCardinalityResult.Output, "too many libraries");
+
+        var nestedProject = CreateNestedProjectConfigCase();
+        var nestedProjectResult = Run("check", nestedProject.Project);
+        AssertEqual(1, nestedProjectResult.ExitCode, "nested project configuration scope exit code");
+        AssertContains(nestedProjectResult.Output, "FF001");
+        using (var nestedProjectJson = JsonDocument.Parse(Run("check", nestedProject.Project, "--format", "json").StandardOutput))
+        {
+            AssertEqual(
+                true,
+                nestedProjectJson.RootElement.GetProperty("sources").EnumerateArray().All(source => source.GetProperty("repositoryControlled").GetBoolean()),
+                "nested project configuration provenance");
+        }
+
+        var nestedSolution = CreateNestedSolutionConfigCase();
+        var nestedSolutionResult = Run("check", nestedSolution.Solution!);
+        AssertEqual(1, nestedSolutionResult.ExitCode, "nested solution configuration scope exit code");
+        AssertContains(nestedSolutionResult.Output, "FF001");
+
+        var worktreePolicy = CreateWorktreePolicyCase();
+        var worktreePolicyResult = Run("check", worktreePolicy.Project);
+        AssertEqual(1, worktreePolicyResult.ExitCode, ".git file repository policy exit code");
+        AssertContains(worktreePolicyResult.Output, "FF007");
+
+        var truncatedGraph = CreateCase("truncated-graph", ["Company.Secret"], [], ["public"]);
+        File.WriteAllText(
+            Path.Combine(Path.GetDirectoryName(truncatedGraph.Project)!, "obj", "project.assets.json"),
+            JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["version"] = 3,
+                ["targets"] = new Dictionary<string, object>
+                {
+                    ["net8.0"] = new Dictionary<string, object>
+                    {
+                        ["Company.Secret/1.0.0"] = new { }
+                    }
+                },
+                ["libraries"] = new Dictionary<string, object>()
+            }),
+            Encoding.UTF8);
+        var truncatedGraphResult = Run("check", truncatedGraph.Project, "--config", truncatedGraph.Config!);
+        AssertEqual(2, truncatedGraphResult.ExitCode, "truncated assets graph exit code");
+        AssertContains(truncatedGraphResult.Output, "has no library record");
+
+        var missingLibraryType = CreateCase("missing-library-type", ["Company.Secret"], [], ["public"]);
+        File.WriteAllText(
+            Path.Combine(Path.GetDirectoryName(missingLibraryType.Project)!, "obj", "project.assets.json"),
+            JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["version"] = 3,
+                ["targets"] = new Dictionary<string, object>
+                {
+                    ["net8.0"] = new Dictionary<string, object>
+                    {
+                        ["Company.Secret/1.0.0"] = new { }
+                    }
+                },
+                ["libraries"] = new Dictionary<string, object>
+                {
+                    ["Company.Secret/1.0.0"] = new { sha512 = "synthetic" }
+                }
+            }),
+            Encoding.UTF8);
+        var missingLibraryTypeResult = Run("check", missingLibraryType.Project, "--config", missingLibraryType.Config!);
+        AssertEqual(2, missingLibraryTypeResult.ExitCode, "missing library type exit code");
+        AssertContains(missingLibraryTypeResult.Output, "library record 'Company.Secret/1.0.0' has invalid type data");
+
+        var zeroPackage = CreateCase("zero-package", [], [], ["public"]);
+        var zeroPackageResult = Run("check", zeroPackage.Project, "--config", zeroPackage.Config!);
+        AssertEqual(0, zeroPackageResult.ExitCode, "legitimate zero-package graph exit code");
+
+        var partialSolution = CreatePartialSolutionCase();
+        var partialSolutionResult = Run("check", partialSolution.Solution!);
+        AssertEqual(2, partialSolutionResult.ExitCode, "partial solution exit code");
+        AssertContains(partialSolutionResult.Output, "declares a project member that could not be read");
+
+        var mixedSolution = CreateMixedSolutionCase();
+        var mixedSolutionResult = Run("check", mixedSolution.Solution!);
+        AssertEqual(1, mixedSolutionResult.ExitCode, "mixed solution member exit code");
+        AssertContains(mixedSolutionResult.Output, "FF001");
+
+        var wrongTypedSelector = CreateCase("wrong-typed-selector", ["Company.Internal"], [], ["public", "private"]);
+        var wrongTypedPolicy = Path.Combine(wrongTypedSelector.Root, "wrong-typed.json");
+        File.WriteAllText(
+            wrongTypedPolicy,
+            "{\"version\":1,\"sourceTrust\":{\"public\":\"public\",\"private\":\"private\"},\"privatePackages\":[\"Company.*\"],\"exceptions\":[{\"code\":\"FF007\",\"packagePattern\":\"Company.*\",\"sourceKey\":17,\"reason\":\"invalid selector\"}]}",
+            Encoding.UTF8);
+        var wrongTypedSelectorResult = Run("check", wrongTypedSelector.Project, "--config", wrongTypedSelector.Config!, "--policy", wrongTypedPolicy);
+        AssertEqual(2, wrongTypedSelectorResult.ExitCode, "wrong-typed selector exit code");
+        AssertContains(wrongTypedSelectorResult.Output, "sourceKey");
+
+        var conflictingSelectorPolicy = Path.Combine(wrongTypedSelector.Root, "conflicting-selector.json");
+        File.WriteAllText(
+            conflictingSelectorPolicy,
+            "{\"version\":1,\"exceptions\":[{\"code\":\"FF007\",\"packagePattern\":\"Company.*\",\"pattern\":\"Company.*\",\"reason\":\"conflicting selectors\"}]}",
+            Encoding.UTF8);
+        var conflictingSelectorResult = Run("check", wrongTypedSelector.Project, "--config", wrongTypedSelector.Config!, "--policy", conflictingSelectorPolicy);
+        AssertEqual(2, conflictingSelectorResult.ExitCode, "conflicting selector exit code");
+        AssertContains(conflictingSelectorResult.Output, "conflicting package pattern selectors");
+
+        var partiallyExcepted = CreateCase("partially-excepted", ["Company.Internal"],
+            ["<packageSourceMapping><packageSource key=\"public\"><package pattern=\"Company.*\" /></packageSource><packageSource key=\"other\"><package pattern=\"Company.*\" /></packageSource></packageSourceMapping>"],
+            ["public", "other"]);
+        var partiallyExceptedPolicy = Path.Combine(partiallyExcepted.Root, "partial-exception.json");
+        File.WriteAllText(
+            partiallyExceptedPolicy,
+            "{\"version\":1,\"sourceTrust\":{\"public\":\"public\",\"other\":\"public\"},\"privatePackages\":[\"Company.*\"],\"exceptions\":[{\"code\":\"FF002\",\"packagePattern\":\"Company.*\",\"reason\":\"accepted ambiguity\"},{\"code\":\"FF007\",\"packagePattern\":\"Company.*\",\"sourceKey\":\"public\",\"reason\":\"approved source\"}]}",
+            Encoding.UTF8);
+        var partiallyExceptedResult = Run("check", partiallyExcepted.Project, "--config", partiallyExcepted.Config!, "--policy", partiallyExceptedPolicy);
+        AssertEqual(1, partiallyExceptedResult.ExitCode, "partially excepted multi-source exit code");
+        AssertContains(partiallyExceptedResult.Output, "\"other\"");
+        AssertNotContains(partiallyExceptedResult.Output, "source keys \"public\", \"other\"");
+    }
+
+    private TestCase CreateNestedProjectConfigCase()
+    {
+        var root = Path.Combine(_root, "nested-project-config");
+        var projectDirectory = Path.Combine(root, "src", "nested");
+        Directory.CreateDirectory(projectDirectory);
+        Directory.CreateDirectory(Path.Combine(root, ".git"));
+        var project = Path.Combine(projectDirectory, "Project.csproj");
+        WriteProjectAndAssets(project, ["Feed.Nested"]);
+        WriteConfig(Path.Combine(root, "NuGet.config"), ["safe"]);
+        WriteConfig(Path.Combine(projectDirectory, "NuGet.config"), ["one", "two"]);
+        return new(root, project, null, null);
+    }
+
+    private TestCase CreateNestedSolutionConfigCase()
+    {
+        var root = Path.Combine(_root, "nested-solution-config");
+        var solutionDirectory = Path.Combine(root, "solutions", "nested");
+        Directory.CreateDirectory(solutionDirectory);
+        Directory.CreateDirectory(Path.Combine(root, ".git"));
+        var project = Path.Combine(solutionDirectory, "Project.csproj");
+        WriteProjectAndAssets(project, ["Feed.NestedSolution"]);
+        var solution = Path.Combine(solutionDirectory, "Nested.sln");
+        WriteSolution(solution, [("Project", "Project.csproj", "csproj")]);
+        WriteConfig(Path.Combine(root, "NuGet.config"), ["safe"]);
+        WriteConfig(Path.Combine(solutionDirectory, "NuGet.config"), ["one", "two"]);
+        return new(root, project, solution, null);
+    }
+
+    private TestCase CreateWorktreePolicyCase()
+    {
+        var root = Path.Combine(_root, "worktree-policy");
+        var projectDirectory = Path.Combine(root, "src", "nested");
+        Directory.CreateDirectory(projectDirectory);
+        File.WriteAllText(Path.Combine(root, ".git"), "gitdir: ../.git/worktrees/feedfence", Encoding.UTF8);
+        var project = Path.Combine(projectDirectory, "Project.csproj");
+        WriteProjectAndAssets(project, ["Company.Secret"]);
+        WriteConfig(Path.Combine(root, "NuGet.config"), ["public"]);
+        File.WriteAllText(
+            Path.Combine(root, "feedfence.json"),
+            "{\"version\":1,\"sourceTrust\":{\"public\":\"public\"},\"privatePackages\":[\"Company.*\"]}",
+            Encoding.UTF8);
+        return new(root, project, null, null);
+    }
+
+    private TestCase CreatePartialSolutionCase()
+    {
+        var root = Path.Combine(_root, "partial-solution");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(Path.Combine(root, ".git"));
+        var existing = Path.Combine(root, "Existing.csproj");
+        WriteProjectAndAssets(existing, []);
+        var solution = Path.Combine(root, "Partial.sln");
+        WriteSolution(solution, [("Existing", "Existing.csproj", "csproj"), ("Missing", "Missing.csproj", "csproj")]);
+        WriteConfig(Path.Combine(root, "NuGet.config"), ["one"]);
+        return new(root, existing, solution, null);
+    }
+
+    private TestCase CreateMixedSolutionCase()
+    {
+        var root = Path.Combine(_root, "mixed-solution");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(Path.Combine(root, ".git"));
+        var csProject = Path.Combine(root, "Empty.csproj");
+        var fsProject = Path.Combine(root, "Packages.fsproj");
+        WriteProjectAndAssets(csProject, []);
+        WriteProjectAndAssets(fsProject, ["Feed.Mixed"]);
+        var solution = Path.Combine(root, "Mixed.sln");
+        WriteSolution(solution, [("Empty", "Empty.csproj", "csproj"), ("Packages", "Packages.fsproj", "fsproj")]);
+        WriteConfig(Path.Combine(root, "NuGet.config"), ["one", "two"]);
+        return new(root, csProject, solution, null);
+    }
+
+    private static void WriteProjectAndAssets(string project, IReadOnlyList<string> packages)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(project)!);
+        Directory.CreateDirectory(Path.Combine(Path.GetDirectoryName(project)!, "obj"));
+        File.WriteAllText(project, "<Project />", Encoding.UTF8);
+        var libraries = packages.ToDictionary(package => package + "/1.0.0", package => (object)new { type = "package" });
+        var targetLibraries = packages.ToDictionary(package => package + "/1.0.0", package => (object)new { });
+        File.WriteAllText(
+            Path.Combine(Path.GetDirectoryName(project)!, "obj", "project.assets.json"),
+            JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["version"] = 3,
+                ["targets"] = new Dictionary<string, object> { ["net8.0"] = targetLibraries },
+                ["libraries"] = libraries
+            }),
+            Encoding.UTF8);
+    }
+
+    private static void WriteConfig(string path, IReadOnlyList<string> sourceKeys)
+    {
+        var root = Path.GetDirectoryName(path)!;
+        var sources = sourceKeys.Select(key => $"<add key=\"{SecurityElement.Escape(key)}\" value=\"{SecurityElement.Escape(Path.Combine(root, "feeds", key))}\" />");
+        File.WriteAllText(path, $"<configuration><packageSources><clear />{string.Join(string.Empty, sources)}</packageSources></configuration>", Encoding.UTF8);
+    }
+
+    private static void WriteSolution(string path, IReadOnlyList<(string Name, string RelativePath, string Extension)> projects)
+    {
+        var lines = new List<string> { "Microsoft Visual Studio Solution File, Format Version 12.00" };
+        var index = 0;
+        foreach (var project in projects)
+        {
+            index++;
+            var projectType = project.Extension == "fsproj"
+                ? "F2A71F9B-5D33-465A-A702-920D77279786"
+                : "FAE04EC0-301F-11D3-BF4B-00C04F79EFBC";
+            var relativePath = project.RelativePath.Replace('/', '\\');
+            lines.Add($"Project(\"{{{projectType}}}\") = \"{project.Name}\", \"{relativePath}\", \"{{00000000-0000-0000-0000-{index:000000000000}}}\"");
+            lines.Add("EndProject");
+        }
+
+        File.WriteAllLines(path, lines, Encoding.UTF8);
     }
 
     private TestCase CreateCase(
@@ -291,7 +517,7 @@ internal sealed class Fixture : IDisposable
         var mappingText = string.Join(string.Empty, mappings);
         var config = Path.Combine(root, "NuGet.config");
         File.WriteAllText(config, $"<configuration><packageSources><clear />{string.Join(string.Empty, sourceElements)}</packageSources>{mappingText}</configuration>", Encoding.UTF8);
-        return new(root, project, config);
+        return new(root, project, null, config);
     }
 
     private ProcessResult Run(params string[] args)
@@ -393,7 +619,7 @@ internal sealed class Fixture : IDisposable
     }
 }
 
-internal sealed record TestCase(string Root, string Project, string Config);
+internal sealed record TestCase(string Root, string Project, string? Solution, string? Config);
 internal sealed record ProcessResult(int ExitCode, string StandardOutput, string StandardError)
 {
     public string Output => StandardOutput + StandardError;

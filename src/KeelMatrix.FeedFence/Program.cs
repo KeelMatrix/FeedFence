@@ -241,7 +241,7 @@ internal sealed record MappingSelection(
     IReadOnlyList<SourceInfo> Sources,
     IReadOnlyList<string> WinningPatterns);
 
-internal sealed record ProjectTarget(string RepositoryRoot, IReadOnlyList<string> ProjectPaths);
+internal sealed record ProjectTarget(string RepositoryRoot, IReadOnlyList<string> ProjectPaths, string RestoreContext);
 
 internal sealed record MatchedPattern(MappingPattern Mapping, SourceInfo? Source, int Score);
 
