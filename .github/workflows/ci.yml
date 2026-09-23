@@ -92,3 +92,7 @@ jobs:
       - name: Run repository hygiene self-test
         shell: pwsh
         run: pwsh ./scripts/Invoke-RepoHygiene.ps1 -SelfTest
+
+      - name: Run release contract self-test
+        shell: pwsh
+        run: pwsh ./scripts/Invoke-ReleaseContract.ps1 -SelfTest

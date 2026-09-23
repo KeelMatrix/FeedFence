@@ -47,4 +47,3 @@ meaning are stable v1 contracts. A contract change requires:
 The report contract does not promise package-feed reachability, credential
 validation, or network isolation. FeedFence remains an offline analyzer during
 the core analysis operation.
-the core analysis operation.

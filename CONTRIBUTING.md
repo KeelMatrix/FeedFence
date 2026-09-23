@@ -30,11 +30,15 @@ Run the focused checks in this order after a relevant change:
 
 ```powershell
 dotnet build KeelMatrix.FeedFence.sln -c Release --no-restore
+pwsh ./scripts/Invoke-ReleaseWarningsAsErrors.ps1 -Configuration Release
 dotnet run --project tests/FeedFenceCliTests/KeelMatrix.FeedFence.CliTests.csproj -c Release --no-build
 dotnet run --project tests/Phase0Probe/KeelMatrix.FeedFence.Phase0Probe.csproj -c Release --no-build
 pwsh ./scripts/Invoke-PlatformFixtures.ps1 -Configuration Release
 pwsh ./scripts/Invoke-PackGate.ps1 -Configuration Release
 pwsh ./scripts/Invoke-DependencyAudit.ps1
+pwsh ./scripts/Invoke-RepoHygiene.ps1
+pwsh ./scripts/Invoke-RepoHygiene.ps1 -SelfTest
+pwsh ./scripts/Invoke-ReleaseContract.ps1 -SelfTest
 dotnet format KeelMatrix.FeedFence.sln --verify-no-changes --no-restore
 ```
 
