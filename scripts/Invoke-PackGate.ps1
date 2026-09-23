@@ -203,9 +203,9 @@ try {
     if ([string]::IsNullOrWhiteSpace($userProfile)) {
         $userProfile = $env:HOME
     }
-    $telemetryNupkg = Join-Path $userProfile (Join-Path '.nuget' (Join-Path 'packages' (Join-Path 'keelmatrix.telemetry' (Join-Path '0.1.0' 'keelmatrix.telemetry.0.1.0.nupkg'))))
+    $telemetryNupkg = Join-Path $userProfile (Join-Path '.nuget' (Join-Path 'packages' (Join-Path 'keelmatrix.telemetry' (Join-Path '0.1.1' 'keelmatrix.telemetry.0.1.1.nupkg'))))
     if (-not (Test-Path -LiteralPath $telemetryNupkg)) {
-        throw "The resolved KeelMatrix.Telemetry 0.1.0 package is not available for the isolated local source: $telemetryNupkg"
+        throw "The resolved KeelMatrix.Telemetry 0.1.1 package is not available for the isolated local source: $telemetryNupkg"
     }
     Copy-Item -LiteralPath $telemetryNupkg -Destination (Join-Path $localSource (Split-Path $telemetryNupkg -Leaf))
 
