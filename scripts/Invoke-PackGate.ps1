@@ -396,7 +396,7 @@ try {
         '-nologo'
     ) $repositoryRoot @{}
     $guardProbeOutput = $guardProbe.StandardOutput + $guardProbe.StandardError
-    if ($guardProbe.ExitCode -eq 0 -or $guardProbeOutput -notmatch 'Sensitive pack input rejected') {
+    if ($guardProbe.ExitCode -eq 0 -or $guardProbeOutput -notmatch 'error\s*:\s*Sensitive pack input rejected:') {
         throw 'The MSBuild sensitive-pack guard did not reject the synthetic sensitive input.'
     }
     Write-Output 'MSBuild sensitive-pack guard rejection: PASS (.env probe rejected before nuspec generation).'
@@ -410,7 +410,7 @@ try {
         '-nologo'
     ) $repositoryRoot @{}
     $repositoryInternalProbeOutput = $repositoryInternalProbe.StandardOutput + $repositoryInternalProbe.StandardError
-    if ($repositoryInternalProbe.ExitCode -eq 0 -or $repositoryInternalProbeOutput -notmatch 'Sensitive pack input rejected') {
+    if ($repositoryInternalProbe.ExitCode -eq 0 -or $repositoryInternalProbeOutput -notmatch 'error\s*:\s*Sensitive pack input rejected:') {
         throw 'The MSBuild sensitive-pack guard did not reject a repository-internal tests input.'
     }
     Write-Output 'MSBuild sensitive-pack guard rejection: PASS (repository-internal tests input rejected).'
