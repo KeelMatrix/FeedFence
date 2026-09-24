@@ -11,7 +11,8 @@
   identities and an explicit stdout/stderr contract.
 - Added opt-out-aware shared activation measurement, three-platform fixture
   coverage, and an isolated package-consumer smoke gate.
-- Added fail-closed restore-graph completeness validation, including official
-  package-target metadata and target/library type agreement, alongside
+- Added fail-closed restore-graph completeness validation, including the
+  official dependency-target domain, flag combinations, and compatible
+  target/library record types, alongside
   solution-folder-aware target discovery and repository-relative sensitive
   package-input checks.

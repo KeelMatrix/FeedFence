@@ -46,7 +46,7 @@ internal sealed class Fixture : IDisposable
         AssertProcess(0, "--help");
         var help = Run("--help");
         AssertContains(help.Output, "feedfence check [path] [options]");
-        AssertContains(help.Output, "Declared package dependencies must resolve to package-typed assets targets and libraries.");
+        AssertContains(help.Output, "Declared dependency targets must use supported NuGet values and compatible assets records.");
         AssertProcess(0, "--version");
 
         var specificity = CreateCase("specificity", ["Feed.Exact", "Feed.Prefix.Item", "Feed.Wildcard"],
@@ -359,6 +359,50 @@ internal sealed class Fixture : IDisposable
         var omittedDeclaredDependencyResult = Run("check", omittedDeclaredDependency.Project, "--config", omittedDeclaredDependency.Config!);
         AssertEqual(2, omittedDeclaredDependencyResult.ExitCode, "omitted declared dependency exit code");
         AssertContains(omittedDeclaredDependencyResult.Output, "declared dependency");
+
+        foreach (var invalidTarget in new[]
+        {
+            (Name: "unknown", Value: "Mystery"),
+            (Name: "mixed-unknown", Value: "Package, Mystery"),
+            (Name: "none", Value: "None"),
+            (Name: "numeric-zero", Value: "0"),
+            (Name: "numeric", Value: "1"),
+            (Name: "empty-segment", Value: "Package,,Project")
+        })
+        {
+            var invalidDependencyTarget = CreateCase($"invalid-dependency-target-{invalidTarget.Name}", [], [], ["public"]);
+            WriteDependencyTargetAssets(invalidDependencyTarget.Project, invalidTarget.Value, "project", "project");
+            var invalidDependencyTargetResult = Run("check", invalidDependencyTarget.Project, "--config", invalidDependencyTarget.Config!);
+            AssertEqual(2, invalidDependencyTargetResult.ExitCode, $"{invalidTarget.Name} dependency target exit code");
+            AssertContains(invalidDependencyTargetResult.Output, "invalid project dependency target");
+        }
+
+        foreach (var targetValue in Enumerable.Range(1, 63).Where(value => (value & 1) != 0))
+        {
+            var targetText = FormatDependencyTarget(targetValue);
+            var packageTarget = CreateCase($"package-dependency-target-{targetValue}", [], [], ["public"]);
+            WriteDependencyTargetAssets(packageTarget.Project, targetText, "package", "package");
+            var packageTargetResult = Run("check", packageTarget.Project, "--config", packageTarget.Config!);
+            AssertEqual(0, packageTargetResult.ExitCode, $"package-bearing dependency target {targetText} exit code");
+            AssertContains(packageTargetResult.Output, "1 resolved packages");
+        }
+
+        foreach (var targetValue in Enumerable.Range(1, 62).Where(value => (value & 1) == 0))
+        {
+            var targetText = FormatDependencyTarget(targetValue);
+            var recordType = GetCompatibleNonPackageLibraryType(targetValue);
+            var nonPackageTarget = CreateCase($"non-package-dependency-target-{targetValue}", [], [], ["public"]);
+            WriteDependencyTargetAssets(nonPackageTarget.Project, targetText, recordType, recordType);
+            var nonPackageTargetResult = Run("check", nonPackageTarget.Project, "--config", nonPackageTarget.Config!);
+            AssertEqual(0, nonPackageTargetResult.ExitCode, $"non-package dependency target {targetText} exit code");
+            AssertContains(nonPackageTargetResult.Output, "0 resolved packages");
+        }
+
+        var incompatibleNonPackageTarget = CreateCase("incompatible-non-package-dependency-target", [], [], ["public"]);
+        WriteDependencyTargetAssets(incompatibleNonPackageTarget.Project, "Project", "assembly", "assembly");
+        var incompatibleNonPackageTargetResult = Run("check", incompatibleNonPackageTarget.Project, "--config", incompatibleNonPackageTarget.Config!);
+        AssertEqual(2, incompatibleNonPackageTargetResult.ExitCode, "incompatible non-package dependency target exit code");
+        AssertContains(incompatibleNonPackageTargetResult.Output, "does not allow 'assembly'");
 
         foreach (var typeCase in new[]
         {
@@ -733,6 +777,84 @@ internal sealed class Fixture : IDisposable
                     package => (object)new { target = "Package", version = "[1.0.0, )" })
             }
         };
+    }
+
+    private static void WriteDependencyTargetAssets(string projectPath, string dependencyTarget, string targetType, string libraryType)
+    {
+        File.WriteAllText(
+            projectPath,
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include=\"Company.Secret\" Version=\"1.0.0\" /></ItemGroup></Project>",
+            Encoding.UTF8);
+        File.WriteAllText(
+            Path.Combine(Path.GetDirectoryName(projectPath)!, "obj", "project.assets.json"),
+            JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["version"] = 3,
+                ["targets"] = new Dictionary<string, object>
+                {
+                    ["net8.0"] = new Dictionary<string, object>
+                    {
+                        ["Company.Secret/1.0.0"] = new { type = targetType }
+                    }
+                },
+                ["libraries"] = new Dictionary<string, object>
+                {
+                    ["Company.Secret/1.0.0"] = new { type = libraryType }
+                },
+                ["projectFileDependencyGroups"] = new Dictionary<string, object>
+                {
+                    ["net8.0"] = CompanySecretDependencyGroup
+                },
+                ["project"] = new Dictionary<string, object>
+                {
+                    ["frameworks"] = new Dictionary<string, object>
+                    {
+                        ["net8.0"] = new Dictionary<string, object>
+                        {
+                            ["dependencies"] = new Dictionary<string, object>
+                            {
+                                ["Company.Secret"] = new { target = dependencyTarget, version = "[1.0.0, )" }
+                            }
+                        }
+                    }
+                }
+            }),
+            Encoding.UTF8);
+    }
+
+    private static string FormatDependencyTarget(int value)
+    {
+        if (value == 63)
+        {
+            return "All";
+        }
+
+        var names = new List<string>();
+        if ((value & 7) == 7)
+        {
+            names.Add("PackageProjectExternal");
+        }
+        else
+        {
+            if ((value & 1) != 0) names.Add("Package");
+            if ((value & 2) != 0) names.Add("Project");
+            if ((value & 4) != 0) names.Add("ExternalProject");
+        }
+
+        if ((value & 8) != 0) names.Add("Assembly");
+        if ((value & 16) != 0) names.Add("Reference");
+        if ((value & 32) != 0) names.Add("WinMD");
+        return string.Join(", ", names);
+    }
+
+    private static string GetCompatibleNonPackageLibraryType(int value)
+    {
+        if ((value & 2) != 0) return "project";
+        if ((value & 4) != 0) return "externalProject";
+        if ((value & 8) != 0) return "assembly";
+        if ((value & 16) != 0) return "reference";
+        if ((value & 32) != 0) return "winmd";
+        throw new ArgumentOutOfRangeException(nameof(value));
     }
 
     private void RunReadOnlyConfigurationCases()

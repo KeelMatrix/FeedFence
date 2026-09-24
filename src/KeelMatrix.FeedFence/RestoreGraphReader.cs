@@ -5,6 +5,18 @@ namespace KeelMatrix.FeedFence;
 internal static class RestoreGraphReader
 {
     private static readonly string[] DeclaredDependencySeparators = [" >= ", " > ", " <= ", " < ", " (>= ", " (> ", " (<= ", " (< "];
+    private static readonly Dictionary<string, DeclaredDependencyTarget> DeclaredDependencyTargets =
+        new Dictionary<string, DeclaredDependencyTarget>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Package"] = DeclaredDependencyTarget.Package,
+            ["Project"] = DeclaredDependencyTarget.Project,
+            ["ExternalProject"] = DeclaredDependencyTarget.ExternalProject,
+            ["Assembly"] = DeclaredDependencyTarget.Assembly,
+            ["Reference"] = DeclaredDependencyTarget.Reference,
+            ["WinMD"] = DeclaredDependencyTarget.WinMD,
+            ["All"] = DeclaredDependencyTarget.All,
+            ["PackageProjectExternal"] = DeclaredDependencyTarget.PackageProjectExternal
+        };
     private static readonly HashSet<string> ValidLibraryTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         "package",
@@ -247,25 +259,66 @@ internal static class RestoreGraphReader
                     throw new AnalysisException("project.assets.json contains too many or invalid project dependencies.");
                 }
 
-                if (!string.Equals(targetKind.GetString(), "Package", StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
+                var dependencyTarget = ParseDeclaredDependencyTarget(targetKind.GetString()!);
+                var isPackageDependency = dependencyTarget.HasFlag(DeclaredDependencyTarget.Package);
 
                 foreach (var matchingTarget in matchingTargets)
                 {
                     if (!matchingTarget.TryGetValue(dependency.Name, out var targetLibrary))
                     {
-                        throw new AnalysisException($"project.assets.json is incomplete; declared package dependency '{dependency.Name}' is not represented in its target framework.");
+                        var dependencyKind = isPackageDependency ? "package dependency" : "dependency";
+                        throw new AnalysisException($"project.assets.json is incomplete; declared {dependencyKind} '{dependency.Name}' is not represented in its target framework.");
                     }
 
-                    if (!string.Equals(targetLibrary.Type, "package", StringComparison.OrdinalIgnoreCase))
+                    if (isPackageDependency && !string.Equals(targetLibrary.Type, "package", StringComparison.OrdinalIgnoreCase))
                     {
                         throw new AnalysisException($"project.assets.json is inconsistent; declared package dependency '{dependency.Name}' resolves to non-package target and library records.");
+                    }
+
+                    if (!isPackageDependency && !TargetAllowsLibraryType(dependencyTarget, targetLibrary.Type))
+                    {
+                        throw new AnalysisException($"project.assets.json is inconsistent; declared dependency '{dependency.Name}' has a target that does not allow '{targetLibrary.Type}' target and library records.");
                     }
                 }
             }
         }
+    }
+
+    private static DeclaredDependencyTarget ParseDeclaredDependencyTarget(string value)
+    {
+        var result = DeclaredDependencyTarget.None;
+        foreach (var segment in value.Split(','))
+        {
+            var name = segment.Trim();
+            if (name.Length == 0 || !DeclaredDependencyTargets.TryGetValue(name, out var target))
+            {
+                throw new AnalysisException("project.assets.json contains an invalid project dependency target.");
+            }
+
+            result |= target;
+        }
+
+        if (result == DeclaredDependencyTarget.None)
+        {
+            throw new AnalysisException("project.assets.json contains an invalid project dependency target.");
+        }
+
+        return result;
+    }
+
+    private static bool TargetAllowsLibraryType(DeclaredDependencyTarget target, string libraryType)
+    {
+        var libraryTarget = libraryType.ToLowerInvariant() switch
+        {
+            "package" => DeclaredDependencyTarget.Package,
+            "project" => DeclaredDependencyTarget.Project,
+            "externalproject" => DeclaredDependencyTarget.ExternalProject,
+            "assembly" => DeclaredDependencyTarget.Assembly,
+            "reference" => DeclaredDependencyTarget.Reference,
+            "winmd" => DeclaredDependencyTarget.WinMD,
+            _ => DeclaredDependencyTarget.None
+        };
+        return (target & libraryTarget) != 0;
     }
 
     private static string GetDeclaredDependencyName(string declaration)
@@ -310,6 +363,20 @@ internal static class RestoreGraphReader
     }
 
     private sealed record TargetLibrary(string Type);
+
+    [Flags]
+    private enum DeclaredDependencyTarget : ushort
+    {
+        None = 0,
+        Package = 1 << 0,
+        Project = 1 << 1,
+        ExternalProject = 1 << 2,
+        Assembly = 1 << 3,
+        Reference = 1 << 4,
+        WinMD = 1 << 5,
+        All = Package | Project | ExternalProject | Assembly | Reference | WinMD,
+        PackageProjectExternal = Package | Project | ExternalProject
+    }
 
     private static HashSet<string> ReadLockFile(string path)
     {

@@ -259,6 +259,50 @@ function New-ConsumerFixture([string]$Root, [string]$Name, [string[]]$SourceKeys
     [pscustomobject]@{ Root = $fixtureRoot; Project = $projectPath; Config = $configPath }
 }
 
+function Get-DependencyTargetText([int]$Value) {
+    if ($Value -eq 63) { return 'All' }
+
+    $names = [System.Collections.Generic.List[string]]::new()
+    if (($Value -band 7) -eq 7) {
+        $names.Add('PackageProjectExternal')
+    }
+    else {
+        if (($Value -band 1) -ne 0) { $names.Add('Package') }
+        if (($Value -band 2) -ne 0) { $names.Add('Project') }
+        if (($Value -band 4) -ne 0) { $names.Add('ExternalProject') }
+    }
+
+    if (($Value -band 8) -ne 0) { $names.Add('Assembly') }
+    if (($Value -band 16) -ne 0) { $names.Add('Reference') }
+    if (($Value -band 32) -ne 0) { $names.Add('WinMD') }
+    return $names -join ', '
+}
+
+function New-DependencyTargetFixture([string]$Root, [string]$Name, [string]$DependencyTarget, [string]$RecordType) {
+    $fixtureRoot = Join-Path $Root $Name
+    $objRoot = Join-Path $fixtureRoot 'obj'
+    New-Item -ItemType Directory -Force -Path $objRoot | Out-Null
+    $projectPath = Join-Path $fixtureRoot 'Fixture.csproj'
+    Set-Content -LiteralPath $projectPath -Encoding utf8 -Value '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Company.Secret" Version="1.0.0" /></ItemGroup></Project>'
+    $assets = @{
+        version = 3
+        targets = @{ 'net8.0' = @{ 'Company.Secret/1.0.0' = @{ type = $RecordType } } }
+        libraries = @{ 'Company.Secret/1.0.0' = @{ type = $RecordType } }
+        projectFileDependencyGroups = @{ 'net8.0' = @('Company.Secret >= 1.0.0') }
+        project = @{
+            frameworks = @{
+                'net8.0' = @{
+                    dependencies = @{
+                        'Company.Secret' = @{ target = $DependencyTarget; version = '[1.0.0, )' }
+                    }
+                }
+            }
+        }
+    } | ConvertTo-Json -Depth 8 -Compress
+    Set-Content -LiteralPath (Join-Path $objRoot 'project.assets.json') -Encoding utf8 -Value $assets
+    return $projectPath
+}
+
 function Write-EquivalencePackage([string]$Path, [string]$Id) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
     $archive = [System.IO.Compression.ZipFile]::Open($Path, [System.IO.Compression.ZipArchiveMode]::Create)
@@ -614,6 +658,27 @@ try {
     $omittedDependencyResult = Invoke-Captured $toolCommand.FullName @('check', $omittedDependencyProject, '--config', $pass.Config, '--format', 'text') $consumerRoot $consumerEnvironment
     Assert-ConsumerResult $omittedDependencyResult 2 'omitted declared dependency mutation'
     if ($omittedDependencyResult.StandardError -notmatch 'declared dependency') { throw 'The installed omitted-dependency mutation did not explain the incomplete graph.' }
+
+    $unknownDependencyTargetProject = New-DependencyTargetFixture $consumerRoot 'unknown-dependency-target' 'Mystery' 'project'
+    $unknownDependencyTargetResult = Invoke-Captured $toolCommand.FullName @('check', $unknownDependencyTargetProject, '--config', $pass.Config, '--format', 'text') $consumerRoot $consumerEnvironment
+    Assert-ConsumerResult $unknownDependencyTargetResult 2 'unknown dependency target mutation'
+    if ($unknownDependencyTargetResult.StandardError -notmatch 'invalid project dependency target') { throw 'The installed unknown-target mutation did not explain the invalid graph.' }
+
+    $packageTargetCount = 0
+    foreach ($targetValue in (1..63 | Where-Object { ($_ -band 1) -ne 0 })) {
+        $targetText = Get-DependencyTargetText $targetValue
+        $packageTargetProject = New-DependencyTargetFixture $consumerRoot "package-dependency-target-$targetValue" $targetText 'package'
+        $packageTargetResult = Invoke-Captured $toolCommand.FullName @('check', $packageTargetProject, '--config', $pass.Config, '--format', 'text') $consumerRoot $consumerEnvironment
+        Assert-ConsumerResult $packageTargetResult 0 "package-bearing dependency target $targetValue"
+        if ($packageTargetResult.StandardOutput -notmatch '1 resolved packages') { throw "The installed package-bearing target '$targetText' did not resolve as a package." }
+        $packageTargetCount++
+    }
+    Write-Output "Consumer package-bearing dependency targets: PASS ($packageTargetCount official nonzero flag values containing Package)."
+
+    $projectDependencyTargetProject = New-DependencyTargetFixture $consumerRoot 'project-dependency-target' 'Project' 'project'
+    $projectDependencyTargetResult = Invoke-Captured $toolCommand.FullName @('check', $projectDependencyTargetProject, '--config', $pass.Config, '--format', 'text') $consumerRoot $consumerEnvironment
+    Assert-ConsumerResult $projectDependencyTargetResult 0 'supported Project dependency target control'
+    if ($projectDependencyTargetResult.StandardOutput -notmatch '0 resolved packages') { throw 'The installed Project dependency target control did not report an empty package graph.' }
 
     $graphTypeCases = @(
         @{ Name = 'type-substitution'; TargetType = 'project'; LibraryType = 'project'; Expected = 'declared package dependency' },

@@ -74,7 +74,7 @@ internal sealed record CliOptions(
             "feedfence --version",
             "",
             "Checks already-restored package IDs against effective NuGet source policy.",
-            "Declared package dependencies must resolve to package-typed assets targets and libraries.",
+            "Declared dependency targets must use supported NuGet values and compatible assets records.",
             "FeedFence never restores packages or contacts package feeds during analysis.",
             "",
             "Options:",
