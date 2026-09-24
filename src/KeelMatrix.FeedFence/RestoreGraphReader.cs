@@ -56,15 +56,29 @@ internal static class RestoreGraphReader
         var root = document.RootElement;
         if (!root.TryGetProperty("targets", out var targets) || targets.ValueKind != JsonValueKind.Object ||
             !root.TryGetProperty("libraries", out var libraries) || libraries.ValueKind != JsonValueKind.Object ||
-            !root.TryGetProperty("projectFileDependencyGroups", out var dependencyGroups) || dependencyGroups.ValueKind != JsonValueKind.Object)
+            !root.TryGetProperty("projectFileDependencyGroups", out var dependencyGroups) || dependencyGroups.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty("project", out var project) || project.ValueKind != JsonValueKind.Object ||
+            !project.TryGetProperty("frameworks", out var projectFrameworks) || projectFrameworks.ValueKind != JsonValueKind.Object)
         {
             throw new AnalysisException("project.assets.json is incomplete; run restore first, then run FeedFence again.");
         }
 
         EnsureCount(targets, InputLimits.MaxAssetTargetCount, "project.assets.json contains too many target frameworks.");
         EnsureCount(dependencyGroups, InputLimits.MaxAssetFrameworkCount, "project.assets.json contains too many dependency groups.");
-        var targetLibraryNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var targetDependencyNames = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        EnsureCount(projectFrameworks, InputLimits.MaxAssetFrameworkCount, "project.assets.json contains too many project frameworks.");
+        EnsureCount(libraries, InputLimits.MaxAssetLibraryCount, "project.assets.json contains too many libraries.");
+
+        var libraryTypes = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var library in libraries.EnumerateObject())
+        {
+            if (!libraryTypes.TryAdd(library.Name, GetLibraryType("library record", library.Name, library.Value)))
+            {
+                throw new AnalysisException("project.assets.json contains duplicate library identities.");
+            }
+        }
+
+        var targetLibraryNames = new HashSet<string>(StringComparer.Ordinal);
+        var targetLibrariesByFramework = new Dictionary<string, Dictionary<string, TargetLibrary>>(StringComparer.OrdinalIgnoreCase);
         var targetFrameworkCount = 0;
         var targetLibraryCount = 0;
         foreach (var target in targets.EnumerateObject())
@@ -75,7 +89,7 @@ internal static class RestoreGraphReader
                 throw new AnalysisException("project.assets.json contains too many or invalid target frameworks.");
             }
 
-            var frameworkDependencyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var frameworkDependencyNames = new Dictionary<string, TargetLibrary>(StringComparer.OrdinalIgnoreCase);
             foreach (var targetLibrary in target.Value.EnumerateObject())
             {
                 targetLibraryCount++;
@@ -89,38 +103,46 @@ internal static class RestoreGraphReader
                     throw new AnalysisException($"project.assets.json target library '{targetLibrary.Name}' is malformed.");
                 }
 
-                frameworkDependencyNames.Add(GetLibraryName(targetLibrary.Name));
-                targetLibraryNames.Add(targetLibrary.Name);
-                if (!libraries.TryGetProperty(targetLibrary.Name, out var libraryRecord))
+                var libraryName = GetLibraryName(targetLibrary.Name);
+                if (!libraryTypes.TryGetValue(targetLibrary.Name, out var libraryType))
                 {
                     throw new AnalysisException($"project.assets.json is incomplete; target library '{targetLibrary.Name}' has no library record.");
                 }
 
-                ValidateLibraryRecord(targetLibrary.Name, libraryRecord);
+                var targetType = GetLibraryType("target library", targetLibrary.Name, targetLibrary.Value);
+                if (!string.Equals(targetType, libraryType, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new AnalysisException($"project.assets.json is inconsistent; target and library types disagree for '{targetLibrary.Name}'.");
+                }
+
+                if (!frameworkDependencyNames.TryAdd(libraryName, new TargetLibrary(targetType)))
+                {
+                    throw new AnalysisException($"project.assets.json is inconsistent; target framework '{target.Name}' contains multiple identities for '{libraryName}'.");
+                }
+
+                targetLibraryNames.Add(targetLibrary.Name);
             }
 
-            if (!targetDependencyNames.TryAdd(target.Name, frameworkDependencyNames))
+            if (!targetLibrariesByFramework.TryAdd(target.Name, frameworkDependencyNames))
             {
                 throw new AnalysisException("project.assets.json contains duplicate target framework identities.");
             }
         }
 
-        ValidateDeclaredDependencies(dependencyGroups, targetDependencyNames);
+        ValidateDeclaredDependencies(dependencyGroups, targetLibrariesByFramework);
+        ValidateOfficialPackageDependencies(projectFrameworks, targetLibrariesByFramework);
 
-        EnsureCount(libraries, InputLimits.MaxAssetLibraryCount, "project.assets.json contains too many libraries.");
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var library in libraries.EnumerateObject())
+        foreach (var library in libraryTypes)
         {
-            ValidateLibraryRecord(library.Name, library.Value);
-            var type = library.Value.GetProperty("type").GetString()!;
-            if (!string.Equals(type, "package", StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(library.Value, "package", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
 
-            var packageId = GetLibraryName(library.Name);
+            var packageId = GetLibraryName(library.Key);
 
-            if (!targetLibraryNames.Contains(library.Name))
+            if (!targetLibraryNames.Contains(library.Key))
             {
                 throw new AnalysisException("project.assets.json is incomplete; a package library is not present in any target framework.");
             }
@@ -137,7 +159,7 @@ internal static class RestoreGraphReader
 
     private static void ValidateDeclaredDependencies(
         JsonElement dependencyGroups,
-        IReadOnlyDictionary<string, HashSet<string>> targetDependencyNames)
+        IReadOnlyDictionary<string, Dictionary<string, TargetLibrary>> targetLibrariesByFramework)
     {
         var declaredDependencyCount = 0;
         foreach (var dependencyGroup in dependencyGroups.EnumerateObject())
@@ -152,7 +174,7 @@ internal static class RestoreGraphReader
                 continue;
             }
 
-            var matchingTargets = targetDependencyNames
+            var matchingTargets = targetLibrariesByFramework
                 .Where(target =>
                     string.Equals(target.Key, dependencyGroup.Name, StringComparison.OrdinalIgnoreCase) ||
                     target.Key.StartsWith(dependencyGroup.Name + "/", StringComparison.OrdinalIgnoreCase))
@@ -173,9 +195,74 @@ internal static class RestoreGraphReader
                 }
 
                 var dependencyName = GetDeclaredDependencyName(dependency.GetString()!);
-                if (matchingTargets.Any(target => !target.Contains(dependencyName)))
+                if (matchingTargets.Any(target => !target.ContainsKey(dependencyName)))
                 {
                     throw new AnalysisException("project.assets.json is incomplete; a declared dependency is not represented in its target framework.");
+                }
+            }
+        }
+    }
+
+    private static void ValidateOfficialPackageDependencies(
+        JsonElement projectFrameworks,
+        IReadOnlyDictionary<string, Dictionary<string, TargetLibrary>> targetLibrariesByFramework)
+    {
+        var declaredDependencyCount = 0;
+        foreach (var projectFramework in projectFrameworks.EnumerateObject())
+        {
+            if (projectFramework.Value.ValueKind != JsonValueKind.Object)
+            {
+                throw new AnalysisException("project.assets.json contains an invalid project framework.");
+            }
+
+            var matchingTargets = targetLibrariesByFramework
+                .Where(target =>
+                    string.Equals(target.Key, projectFramework.Name, StringComparison.OrdinalIgnoreCase) ||
+                    target.Key.StartsWith(projectFramework.Name + "/", StringComparison.OrdinalIgnoreCase))
+                .Select(target => target.Value)
+                .ToArray();
+            if (matchingTargets.Length == 0)
+            {
+                throw new AnalysisException("project.assets.json is incomplete; a project framework has no matching target framework.");
+            }
+
+            if (!projectFramework.Value.TryGetProperty("dependencies", out var dependencies))
+            {
+                continue;
+            }
+
+            if (dependencies.ValueKind != JsonValueKind.Object)
+            {
+                throw new AnalysisException("project.assets.json contains invalid project dependency metadata.");
+            }
+
+            foreach (var dependency in dependencies.EnumerateObject())
+            {
+                if (++declaredDependencyCount > InputLimits.MaxAssetTargetLibraryCount ||
+                    dependency.Value.ValueKind != JsonValueKind.Object ||
+                    !dependency.Value.TryGetProperty("target", out var targetKind) ||
+                    targetKind.ValueKind != JsonValueKind.String ||
+                    string.IsNullOrWhiteSpace(targetKind.GetString()))
+                {
+                    throw new AnalysisException("project.assets.json contains too many or invalid project dependencies.");
+                }
+
+                if (!string.Equals(targetKind.GetString(), "Package", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                foreach (var matchingTarget in matchingTargets)
+                {
+                    if (!matchingTarget.TryGetValue(dependency.Name, out var targetLibrary))
+                    {
+                        throw new AnalysisException($"project.assets.json is incomplete; declared package dependency '{dependency.Name}' is not represented in its target framework.");
+                    }
+
+                    if (!string.Equals(targetLibrary.Type, "package", StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new AnalysisException($"project.assets.json is inconsistent; declared package dependency '{dependency.Name}' resolves to non-package target and library records.");
+                    }
                 }
             }
         }
@@ -208,7 +295,7 @@ internal static class RestoreGraphReader
         return identity[..separator];
     }
 
-    private static void ValidateLibraryRecord(string identity, JsonElement library)
+    private static string GetLibraryType(string recordKind, string identity, JsonElement library)
     {
         if (library.ValueKind != JsonValueKind.Object ||
             !library.TryGetProperty("type", out var type) ||
@@ -216,9 +303,13 @@ internal static class RestoreGraphReader
             type.GetString() is not { } typeValue ||
             !ValidLibraryTypes.Contains(typeValue))
         {
-            throw new AnalysisException($"project.assets.json library record '{identity}' has invalid type data.");
+            throw new AnalysisException($"project.assets.json {recordKind} '{identity}' has invalid type data.");
         }
+
+        return typeValue;
     }
+
+    private sealed record TargetLibrary(string Type);
 
     private static HashSet<string> ReadLockFile(string path)
     {

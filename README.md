@@ -10,7 +10,7 @@ dotnet restore
 feedfence check
 ```
 
-FeedFence reads existing `project.assets.json` and/or `packages.lock.json`. For assets files, every declared dependency in `projectFileDependencyGroups` must be represented in the corresponding framework target and library graph. An unexplained omission fails with exit code `2`; a genuinely empty declared-and-resolved graph remains valid. FeedFence never runs restore, contacts a package feed, invokes a credential provider, or connects to a database. Restore the repository first.
+FeedFence reads existing `project.assets.json` and/or `packages.lock.json`. For assets files, every declared dependency in `projectFileDependencyGroups` must be represented in the corresponding framework target and library graph. Every dependency identified as a package by `project.frameworks.<tfm>.dependencies` must resolve to identity-matched, package-typed target and library records. An unexplained omission or type conflict fails with exit code `2`; a genuine SDK `ProjectReference` or empty declared-and-resolved package graph remains valid. FeedFence never runs restore, contacts a package feed, invokes a credential provider, or connects to a database. Restore the repository first.
 
 ## Tool lifecycle
 
@@ -136,7 +136,7 @@ FeedFence calls the shared client's parameterless activation API with the tool n
 
 ## Limitations and privacy
 
-FeedFence verifies resolved local restore artifacts and effective NuGet configuration. It does not scan vulnerabilities or licenses, query package availability, validate credentials, rewrite configuration, invoke restore, or claim to be a network-isolation sandbox. Configuration, XML, JSON, and restore inputs are size/depth/count bounded; assets graphs accept at most 50,000 libraries/resolved packages, 256 target frameworks, and 100,000 target-library or declared-dependency references. Assets files must contain object-valued `targets`, `libraries`, and `projectFileDependencyGroups`; each declared dependency must appear in every corresponding framework target and have a library record. Malformed, incomplete, unsupported, or inconsistent graphs fail closed with exit code `2`, while a genuinely empty declared-and-resolved graph passes with zero packages. XML DTD and external entity processing is disabled.
+FeedFence verifies resolved local restore artifacts and effective NuGet configuration. It does not scan vulnerabilities or licenses, query package availability, validate credentials, rewrite configuration, invoke restore, or claim to be a network-isolation sandbox. Configuration, XML, JSON, and restore inputs are size/depth/count bounded; assets graphs accept at most 50,000 libraries/resolved packages, 256 target frameworks, and 100,000 target-library or declared-dependency references. Assets files must contain object-valued `targets`, `libraries`, `projectFileDependencyGroups`, and `project.frameworks`; each declared dependency must appear in every corresponding framework target and have an identity-matched library record. Target and library types must agree, and dependencies whose official target is `Package` must use `package` records. Malformed, incomplete, unsupported, or inconsistent graphs fail closed with exit code `2`, while genuine project records and an empty declared-and-resolved package graph remain valid. XML DTD and external entity processing is disabled.
 
 The tool has no supported in-process library API in v1. It targets `net8.0`.
 

@@ -56,9 +56,18 @@ try {
     Set-Content -LiteralPath $projectPath -Encoding utf8 -Value '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>'
     $assets = @{
         version = 3
-        targets = @{ 'net8.0' = @{ 'Fixture.Package/1.0.0' = @{} } }
+        targets = @{ 'net8.0' = @{ 'Fixture.Package/1.0.0' = @{ type = 'package' } } }
         libraries = @{ 'Fixture.Package/1.0.0' = @{ type = 'package' } }
         projectFileDependencyGroups = @{ 'net8.0' = @('Fixture.Package >= 1.0.0') }
+        project = @{
+            frameworks = @{
+                'net8.0' = @{
+                    dependencies = @{
+                        'Fixture.Package' = @{ target = 'Package'; version = '[1.0.0, )' }
+                    }
+                }
+            }
+        }
     } | ConvertTo-Json -Depth 8 -Compress
     Set-Content -LiteralPath (Join-Path (Join-Path $projectDirectory 'obj') 'project.assets.json') -Encoding utf8 -Value $assets
     $fileUri = [Uri]::new($feedDirectory).AbsoluteUri

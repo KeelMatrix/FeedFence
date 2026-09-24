@@ -15,7 +15,7 @@ Use a repository-local tool manifest with `dotnet new tool-manifest` and
 `dotnet tool update --global KeelMatrix.FeedFence` or `dotnet tool update --local KeelMatrix.FeedFence`; uninstall with the corresponding `dotnet tool uninstall`
 command.
 
-FeedFence reads existing `project.assets.json` and/or `packages.lock.json`. For assets files, every declared dependency in `projectFileDependencyGroups` must be represented in the corresponding framework target and library graph. Missing, incomplete, or inconsistent restore artifacts fail with exit code `2` and an instruction to restore first; a genuinely empty declared-and-resolved graph remains valid.
+FeedFence reads existing `project.assets.json` and/or `packages.lock.json`. For assets files, every declared dependency in `projectFileDependencyGroups` must be represented in the corresponding framework target and library graph. Every dependency identified as a package by `project.frameworks.<tfm>.dependencies` must resolve to identity-matched, package-typed target and library records. Missing, incomplete, or type-inconsistent restore artifacts fail with exit code `2` and an instruction to restore first; a genuine SDK `ProjectReference` or empty package graph remains valid.
 
 ## Command contract
 
@@ -35,7 +35,7 @@ The optional repository-root `feedfence.json` supports source trust labels, prot
 
 The tool targets `net8.0`, has no supported in-process API in v1, and makes no analysis-time network or credential-provider calls. Package Source Mapping limits package downloads, not every NuGet metadata query; `FF008` is informational only.
 
-Configuration and restore inputs are bounded. Assets graphs accept at most 50,000 libraries/resolved packages, 256 target frameworks, and 100,000 target-library or declared-dependency references. Assets files must contain object-valued `targets`, `libraries`, and `projectFileDependencyGroups`; each declared dependency must appear in every corresponding framework target and have a library record. Incomplete or inconsistent graphs fail closed with exit code `2`, while a genuinely empty declared-and-resolved graph passes with zero packages.
+Configuration and restore inputs are bounded. Assets graphs accept at most 50,000 libraries/resolved packages, 256 target frameworks, and 100,000 target-library or declared-dependency references. Assets files must contain object-valued `targets`, `libraries`, `projectFileDependencyGroups`, and `project.frameworks`; each declared dependency must appear in every corresponding framework target and have an identity-matched library record. Target and library types must agree, and dependencies whose official target is `Package` must use `package` records. Incomplete or inconsistent graphs fail closed with exit code `2`, while genuine project records and an empty package graph pass with zero packages.
 
 NuGet configuration is hierarchical and `<clear />` resets a collection. Exact
 mapping IDs beat the longest prefix, which beats `*`; equal winners produce

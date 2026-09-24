@@ -574,7 +574,7 @@ internal sealed class ProbeRunner
             {
                 ["net8.0"] = new Dictionary<string, object>
                 {
-                    [$"{packageId}/1.0.0"] = new { }
+                    [$"{packageId}/1.0.0"] = new { type = "package" }
                 }
             },
             ["libraries"] = new Dictionary<string, object>
@@ -584,6 +584,19 @@ internal sealed class ProbeRunner
             ["projectFileDependencyGroups"] = new Dictionary<string, object>
             {
                 ["net8.0"] = new List<string> { $"{packageId} >= 1.0.0" }
+            },
+            ["project"] = new Dictionary<string, object>
+            {
+                ["frameworks"] = new Dictionary<string, object>
+                {
+                    ["net8.0"] = new Dictionary<string, object>
+                    {
+                        ["dependencies"] = new Dictionary<string, object>
+                        {
+                            [packageId] = new { target = "Package", version = "[1.0.0, )" }
+                        }
+                    }
+                }
             }
         };
         File.WriteAllText(Path.Combine(objDirectory, "project.assets.json"), JsonSerializer.Serialize(assets), new UTF8Encoding(false));

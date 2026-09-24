@@ -233,9 +233,18 @@ function New-ConsumerFixture([string]$Root, [string]$Name, [string[]]$SourceKeys
     Set-Content -LiteralPath $projectPath -Encoding utf8 -Value '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Fixture.Package" Version="1.0.0" /></ItemGroup></Project>'
     $assets = @{
         version = 3
-        targets = @{ 'net8.0' = @{ 'Fixture.Package/1.0.0' = @{} } }
+        targets = @{ 'net8.0' = @{ 'Fixture.Package/1.0.0' = @{ type = 'package' } } }
         libraries = @{ 'Fixture.Package/1.0.0' = @{ type = 'package' } }
         projectFileDependencyGroups = @{ 'net8.0' = @('Fixture.Package >= 1.0.0') }
+        project = @{
+            frameworks = @{
+                'net8.0' = @{
+                    dependencies = @{
+                        'Fixture.Package' = @{ target = 'Package'; version = '[1.0.0, )' }
+                    }
+                }
+            }
+        }
     } | ConvertTo-Json -Depth 8 -Compress
     Set-Content -LiteralPath (Join-Path (Join-Path $projectDirectory 'obj') 'project.assets.json') -Encoding utf8 -Value $assets
 
@@ -270,9 +279,18 @@ function Write-EquivalenceProject([string]$Path, [string]$PackageId) {
 function Write-EquivalenceAssets([string]$ProjectPath, [string]$PackageId) {
     $assets = @{
         version = 3
-        targets = @{ 'net8.0' = @{ "$PackageId/1.0.0" = @{} } }
+        targets = @{ 'net8.0' = @{ "$PackageId/1.0.0" = @{ type = 'package' } } }
         libraries = @{ "$PackageId/1.0.0" = @{ type = 'package' } }
         projectFileDependencyGroups = @{ 'net8.0' = @("$PackageId >= 1.0.0") }
+        project = @{
+            frameworks = @{
+                'net8.0' = @{
+                    dependencies = @{
+                        $PackageId = @{ target = 'Package'; version = '[1.0.0, )' }
+                    }
+                }
+            }
+        }
     } | ConvertTo-Json -Depth 8 -Compress
     Set-Content -LiteralPath (Join-Path (Join-Path (Split-Path -Parent $ProjectPath) 'obj') 'project.assets.json') -Encoding utf8 -Value $assets
 }
@@ -592,17 +610,61 @@ try {
     New-Item -ItemType Directory -Force -Path $omittedDependencyObj | Out-Null
     $omittedDependencyProject = Join-Path $omittedDependencyRoot 'Fixture.csproj'
     Set-Content -LiteralPath $omittedDependencyProject -Encoding utf8 -Value '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Company.Secret" Version="1.0.0" /></ItemGroup></Project>'
-    Set-Content -LiteralPath (Join-Path $omittedDependencyObj 'project.assets.json') -Encoding utf8 -Value '{"version":3,"targets":{"net8.0":{}},"libraries":{},"projectFileDependencyGroups":{"net8.0":["Company.Secret >= 1.0.0"]}}'
+    Set-Content -LiteralPath (Join-Path $omittedDependencyObj 'project.assets.json') -Encoding utf8 -Value '{"version":3,"targets":{"net8.0":{}},"libraries":{},"projectFileDependencyGroups":{"net8.0":["Company.Secret >= 1.0.0"]},"project":{"frameworks":{"net8.0":{"dependencies":{"Company.Secret":{"target":"Package","version":"[1.0.0, )"}}}}}}'
     $omittedDependencyResult = Invoke-Captured $toolCommand.FullName @('check', $omittedDependencyProject, '--config', $pass.Config, '--format', 'text') $consumerRoot $consumerEnvironment
     Assert-ConsumerResult $omittedDependencyResult 2 'omitted declared dependency mutation'
     if ($omittedDependencyResult.StandardError -notmatch 'declared dependency') { throw 'The installed omitted-dependency mutation did not explain the incomplete graph.' }
+
+    $graphTypeCases = @(
+        @{ Name = 'type-substitution'; TargetType = 'project'; LibraryType = 'project'; Expected = 'declared package dependency' },
+        @{ Name = 'target-package-library-project'; TargetType = 'package'; LibraryType = 'project'; Expected = 'target and library types disagree' },
+        @{ Name = 'target-project-library-package'; TargetType = 'project'; LibraryType = 'package'; Expected = 'target and library types disagree' }
+    )
+    foreach ($graphTypeCase in $graphTypeCases) {
+        $graphTypeRoot = Join-Path $consumerRoot $graphTypeCase.Name
+        $graphTypeObj = Join-Path $graphTypeRoot 'obj'
+        New-Item -ItemType Directory -Force -Path $graphTypeObj | Out-Null
+        $graphTypeProject = Join-Path $graphTypeRoot 'Fixture.csproj'
+        Set-Content -LiteralPath $graphTypeProject -Encoding utf8 -Value '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Company.Secret" Version="1.0.0" /></ItemGroup></Project>'
+        $graphTypeAssets = @{
+            version = 3
+            targets = @{ 'net8.0' = @{ 'Company.Secret/1.0.0' = @{ type = $graphTypeCase.TargetType } } }
+            libraries = @{ 'Company.Secret/1.0.0' = @{ type = $graphTypeCase.LibraryType; path = '../Company.Secret/Company.Secret.csproj'; msbuildProject = '../Company.Secret/Company.Secret.csproj' } }
+            projectFileDependencyGroups = @{ 'net8.0' = @('Company.Secret >= 1.0.0') }
+            project = @{
+                frameworks = @{
+                    'net8.0' = @{
+                        dependencies = @{
+                            'Company.Secret' = @{ target = 'Package'; version = '[1.0.0, )' }
+                        }
+                    }
+                }
+            }
+        } | ConvertTo-Json -Depth 8 -Compress
+        Set-Content -LiteralPath (Join-Path $graphTypeObj 'project.assets.json') -Encoding utf8 -Value $graphTypeAssets
+        $graphTypeResult = Invoke-Captured $toolCommand.FullName @('check', $graphTypeProject, '--config', $pass.Config, '--format', 'text') $consumerRoot $consumerEnvironment
+        Assert-ConsumerResult $graphTypeResult 2 "$($graphTypeCase.Name) graph mutation"
+        if ($graphTypeResult.StandardError -notmatch $graphTypeCase.Expected) { throw "The installed $($graphTypeCase.Name) mutation did not explain the inconsistent graph." }
+    }
+
+    $projectReferenceRoot = Join-Path $consumerRoot 'sdk-project-reference-control'
+    $projectReferenceChild = Join-Path $projectReferenceRoot 'Child\Child.csproj'
+    $projectReferenceParent = Join-Path $projectReferenceRoot 'Parent\Parent.csproj'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $projectReferenceChild),(Split-Path -Parent $projectReferenceParent) | Out-Null
+    Set-Content -LiteralPath $projectReferenceChild -Encoding utf8 -Value '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>'
+    Set-Content -LiteralPath $projectReferenceParent -Encoding utf8 -Value '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><ProjectReference Include="..\Child\Child.csproj" /></ItemGroup></Project>'
+    $projectReferenceRestore = Invoke-Captured 'dotnet' @('restore', $projectReferenceParent, '--configfile', $pass.Config, '--packages', (Join-Path $consumerRoot 'project-reference-packages'), '--force', '--no-cache', '--disable-parallel', '--verbosity', 'minimal') $projectReferenceRoot $consumerEnvironment
+    Assert-ConsumerResult $projectReferenceRestore 0 'SDK project-reference restore control'
+    $projectReferenceResult = Invoke-Captured $toolCommand.FullName @('check', $projectReferenceParent, '--config', $pass.Config, '--format', 'text') $consumerRoot $consumerEnvironment
+    Assert-ConsumerResult $projectReferenceResult 0 'SDK project-reference analysis control'
+    if ($projectReferenceResult.StandardOutput -notmatch '0 resolved packages') { throw 'The installed SDK project-reference control did not report an empty package graph.' }
 
     $zeroPackageRoot = Join-Path $consumerRoot 'zero-package-control'
     $zeroPackageObj = Join-Path $zeroPackageRoot 'obj'
     New-Item -ItemType Directory -Force -Path $zeroPackageObj | Out-Null
     $zeroPackageProject = Join-Path $zeroPackageRoot 'Fixture.csproj'
     Set-Content -LiteralPath $zeroPackageProject -Encoding utf8 -Value '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>'
-    Set-Content -LiteralPath (Join-Path $zeroPackageObj 'project.assets.json') -Encoding utf8 -Value '{"version":3,"targets":{"net8.0":{}},"libraries":{},"projectFileDependencyGroups":{"net8.0":[]}}'
+    Set-Content -LiteralPath (Join-Path $zeroPackageObj 'project.assets.json') -Encoding utf8 -Value '{"version":3,"targets":{"net8.0":{}},"libraries":{},"projectFileDependencyGroups":{"net8.0":[]},"project":{"frameworks":{"net8.0":{}}}}'
     $zeroPackageResult = Invoke-Captured $toolCommand.FullName @('check', $zeroPackageProject, '--config', $pass.Config, '--format', 'text') $consumerRoot $consumerEnvironment
     Assert-ConsumerResult $zeroPackageResult 0 'true zero-package control'
     if ($zeroPackageResult.StandardOutput -notmatch '0 resolved packages') { throw 'The installed zero-package control did not report an empty graph.' }
