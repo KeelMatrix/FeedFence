@@ -44,6 +44,13 @@ The platform fixture runs the same artifact against the current OS. The Phase 0
 probe and package gate use synthetic/offline fixtures where specified; neither
 should be changed to contact a real package feed during analysis.
 
+The CLI contracts and installed-package gate include a declared-dependency
+omission that must fail with exit code `2`, a separate true zero-package graph
+that must pass, and a solution containing a dotted solution folder plus a real
+project. The package gate also proves that safe inputs below parent directories
+named `Temp`, `tmp`, and `artifacts` are accepted while secret-bearing and
+repository-internal inputs remain rejected.
+
 ## Release preparation
 
 The shipping project is the only packable project. The package gate validates

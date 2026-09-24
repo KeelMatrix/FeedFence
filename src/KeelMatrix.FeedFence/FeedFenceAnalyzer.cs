@@ -715,8 +715,9 @@ internal static class PatternMatcher
 
 internal static class TargetResolver
 {
+    private const string SolutionFolderProjectType = "2150E333-8FDC-42A3-9474-1A3956D46DE8";
     private static readonly Regex SolutionProjectLine = new(
-        "^Project\\(.*\\)\\s*=\\s*\"[^\"]+\",\\s*\"(?<path>[^\"]+)\"",
+        "^Project\\(\"\\{(?<type>[^}]+)\\}\"\\)\\s*=\\s*\"[^\"]+\",\\s*\"(?<path>[^\"]+)\"",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
     private static readonly HashSet<string> SupportedProjectExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -789,8 +790,8 @@ internal static class TargetResolver
         var declaredProjects = File.ReadLines(solutionPath)
             .Select(line => SolutionProjectLine.Match(line))
             .Where(match => match.Success)
+            .Where(match => !string.Equals(match.Groups["type"].Value, SolutionFolderProjectType, StringComparison.OrdinalIgnoreCase))
             .Select(match => Path.GetFullPath(Path.Combine(solutionDirectory, match.Groups["path"].Value.Replace('\\', Path.DirectorySeparatorChar))))
-            .Where(path => !string.IsNullOrEmpty(Path.GetExtension(path)))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 

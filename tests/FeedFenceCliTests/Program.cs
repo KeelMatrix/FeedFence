@@ -44,6 +44,7 @@ internal sealed class Fixture : IDisposable
         AssertProcess(0, "--help");
         var help = Run("--help");
         AssertContains(help.Output, "feedfence check [path] [options]");
+        AssertContains(help.Output, "Declared dependencies must be present in the corresponding assets targets and libraries.");
         AssertProcess(0, "--version");
 
         var specificity = CreateCase("specificity", ["Feed.Exact", "Feed.Prefix.Item", "Feed.Wildcard"],
@@ -329,12 +330,38 @@ internal sealed class Fixture : IDisposable
                         ["Company.Secret/1.0.0"] = new { }
                     }
                 },
-                ["libraries"] = new Dictionary<string, object>()
+                ["libraries"] = new Dictionary<string, object>(),
+                ["projectFileDependencyGroups"] = new Dictionary<string, object>
+                {
+                    ["net8.0"] = new List<string> { "Company.Secret >= 1.0.0" }
+                }
             }),
             Encoding.UTF8);
         var truncatedGraphResult = Run("check", truncatedGraph.Project, "--config", truncatedGraph.Config!);
         AssertEqual(2, truncatedGraphResult.ExitCode, "truncated assets graph exit code");
         AssertContains(truncatedGraphResult.Output, "has no library record");
+
+        var omittedDeclaredDependency = CreateCase("omitted-declared-dependency", [], [], ["public"]);
+        File.WriteAllText(
+            omittedDeclaredDependency.Project,
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include=\"Company.Secret\" Version=\"1.0.0\" /></ItemGroup></Project>",
+            Encoding.UTF8);
+        File.WriteAllText(
+            Path.Combine(Path.GetDirectoryName(omittedDeclaredDependency.Project)!, "obj", "project.assets.json"),
+            "{\"version\":3,\"targets\":{\"net8.0\":{}},\"libraries\":{},\"projectFileDependencyGroups\":{\"net8.0\":[\"Company.Secret >= 1.0.0\"]}}",
+            Encoding.UTF8);
+        var omittedDeclaredDependencyResult = Run("check", omittedDeclaredDependency.Project, "--config", omittedDeclaredDependency.Config!);
+        AssertEqual(2, omittedDeclaredDependencyResult.ExitCode, "omitted declared dependency exit code");
+        AssertContains(omittedDeclaredDependencyResult.Output, "declared dependency");
+
+        var missingDependencyGroups = CreateCase("missing-dependency-groups", ["Company.Secret"], [], ["public"]);
+        File.WriteAllText(
+            Path.Combine(Path.GetDirectoryName(missingDependencyGroups.Project)!, "obj", "project.assets.json"),
+            "{\"version\":3,\"targets\":{\"net8.0\":{\"Company.Secret/1.0.0\":{}}},\"libraries\":{\"Company.Secret/1.0.0\":{\"type\":\"package\"}}}",
+            Encoding.UTF8);
+        var missingDependencyGroupsResult = Run("check", missingDependencyGroups.Project, "--config", missingDependencyGroups.Config!);
+        AssertEqual(2, missingDependencyGroupsResult.ExitCode, "missing dependency groups exit code");
+        AssertContains(missingDependencyGroupsResult.Output, "project.assets.json is incomplete");
 
         var missingLibraryType = CreateCase("missing-library-type", ["Company.Secret"], [], ["public"]);
         File.WriteAllText(
@@ -352,6 +379,10 @@ internal sealed class Fixture : IDisposable
                 ["libraries"] = new Dictionary<string, object>
                 {
                     ["Company.Secret/1.0.0"] = new { sha512 = "synthetic" }
+                },
+                ["projectFileDependencyGroups"] = new Dictionary<string, object>
+                {
+                    ["net8.0"] = new List<string> { "Company.Secret >= 1.0.0" }
                 }
             }),
             Encoding.UTF8);
@@ -362,6 +393,15 @@ internal sealed class Fixture : IDisposable
         var zeroPackage = CreateCase("zero-package", [], [], ["public"]);
         var zeroPackageResult = Run("check", zeroPackage.Project, "--config", zeroPackage.Config!);
         AssertEqual(0, zeroPackageResult.ExitCode, "legitimate zero-package graph exit code");
+
+        var dottedSolutionFolder = CreateDottedSolutionFolderCase();
+        var dottedSolutionFolderResult = Run("check", dottedSolutionFolder.Solution!);
+        AssertEqual(0, dottedSolutionFolderResult.ExitCode, "dotted solution folder exit code");
+
+        var unsupportedSolutionMember = CreateUnsupportedSolutionMemberCase();
+        var unsupportedSolutionMemberResult = Run("check", unsupportedSolutionMember.Solution!);
+        AssertEqual(2, unsupportedSolutionMemberResult.ExitCode, "unsupported real solution member exit code");
+        AssertContains(unsupportedSolutionMemberResult.Output, "unsupported project member");
 
         var partialSolution = CreatePartialSolutionCase();
         var partialSolutionResult = Run("check", partialSolution.Solution!);
@@ -483,6 +523,32 @@ internal sealed class Fixture : IDisposable
         return new(root, csProject, solution, null);
     }
 
+    private TestCase CreateDottedSolutionFolderCase()
+    {
+        var root = Path.Combine(_root, "dotted-solution-folder");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(Path.Combine(root, ".git"));
+        var project = Path.Combine(root, "Project.csproj");
+        WriteProjectAndAssets(project, ["Feed.DottedFolder"]);
+        var solution = Path.Combine(root, "DottedFolder.sln");
+        WriteSolution(solution, [("docs.v2", "docs.v2", "solutionfolder"), ("Project", "Project.csproj", "csproj")]);
+        WriteConfig(Path.Combine(root, "NuGet.config"), ["one"]);
+        return new(root, project, solution, null);
+    }
+
+    private TestCase CreateUnsupportedSolutionMemberCase()
+    {
+        var root = Path.Combine(_root, "unsupported-solution-member");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(Path.Combine(root, ".git"));
+        var project = Path.Combine(root, "Native.vcxproj");
+        File.WriteAllText(project, "<Project />", Encoding.UTF8);
+        var solution = Path.Combine(root, "Unsupported.sln");
+        WriteSolution(solution, [("Native", "Native.vcxproj", "vcxproj")]);
+        WriteConfig(Path.Combine(root, "NuGet.config"), ["one"]);
+        return new(root, project, solution, null);
+    }
+
     private static void WriteProjectAndAssets(string project, IReadOnlyList<string> packages)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(project)!);
@@ -496,7 +562,11 @@ internal sealed class Fixture : IDisposable
             {
                 ["version"] = 3,
                 ["targets"] = new Dictionary<string, object> { ["net8.0"] = targetLibraries },
-                ["libraries"] = libraries
+                ["libraries"] = libraries,
+                ["projectFileDependencyGroups"] = new Dictionary<string, object>
+                {
+                    ["net8.0"] = packages.Select(package => $"{package} >= 1.0.0").ToArray()
+                }
             }),
             Encoding.UTF8);
     }
@@ -515,9 +585,13 @@ internal sealed class Fixture : IDisposable
         foreach (var project in projects)
         {
             index++;
-            var projectType = project.Extension == "fsproj"
-                ? "F2A71F9B-5D33-465A-A702-920D77279786"
-                : "FAE04EC0-301F-11D3-BF4B-00C04F79EFBC";
+            var projectType = project.Extension switch
+            {
+                "fsproj" => "F2A71F9B-5D33-465A-A702-920D77279786",
+                "solutionfolder" => "2150E333-8FDC-42A3-9474-1A3956D46DE8",
+                "vcxproj" => "BC8A1FFA-BEE3-4634-8014-F334798102B3",
+                _ => "FAE04EC0-301F-11D3-BF4B-00C04F79EFBC"
+            };
             var relativePath = project.RelativePath.Replace('/', '\\');
             lines.Add($"Project(\"{{{projectType}}}\") = \"{project.Name}\", \"{relativePath}\", \"{{00000000-0000-0000-0000-{index:000000000000}}}\"");
             lines.Add("EndProject");
@@ -548,7 +622,13 @@ internal sealed class Fixture : IDisposable
             ["targets"] = coherentTargets
                 ? new Dictionary<string, object> { ["net8.0"] = targetLibraries }
                 : new Dictionary<string, object>(),
-            ["libraries"] = libraries
+            ["libraries"] = libraries,
+            ["projectFileDependencyGroups"] = new Dictionary<string, object>
+            {
+                ["net8.0"] = coherentTargets
+                    ? packages.Select(package => $"{package} >= 1.0.0").ToArray()
+                    : Array.Empty<string>()
+            }
         };
         File.WriteAllText(Path.Combine(projectDirectory, "obj", "project.assets.json"), JsonSerializer.Serialize(assets), Encoding.UTF8);
 

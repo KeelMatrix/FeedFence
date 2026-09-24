@@ -230,11 +230,12 @@ function New-ConsumerFixture([string]$Root, [string]$Name, [string[]]$SourceKeys
     $projectDirectory = Join-Path $fixtureRoot 'project'
     New-Item -ItemType Directory -Force -Path (Join-Path $projectDirectory 'obj') | Out-Null
     $projectPath = Join-Path $projectDirectory 'Fixture.csproj'
-    Set-Content -LiteralPath $projectPath -Encoding utf8 -Value '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>'
+    Set-Content -LiteralPath $projectPath -Encoding utf8 -Value '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Fixture.Package" Version="1.0.0" /></ItemGroup></Project>'
     $assets = @{
         version = 3
         targets = @{ 'net8.0' = @{ 'Fixture.Package/1.0.0' = @{} } }
         libraries = @{ 'Fixture.Package/1.0.0' = @{ type = 'package' } }
+        projectFileDependencyGroups = @{ 'net8.0' = @('Fixture.Package >= 1.0.0') }
     } | ConvertTo-Json -Depth 8 -Compress
     Set-Content -LiteralPath (Join-Path (Join-Path $projectDirectory 'obj') 'project.assets.json') -Encoding utf8 -Value $assets
 
@@ -271,6 +272,7 @@ function Write-EquivalenceAssets([string]$ProjectPath, [string]$PackageId) {
         version = 3
         targets = @{ 'net8.0' = @{ "$PackageId/1.0.0" = @{} } }
         libraries = @{ "$PackageId/1.0.0" = @{ type = 'package' } }
+        projectFileDependencyGroups = @{ 'net8.0' = @("$PackageId >= 1.0.0") }
     } | ConvertTo-Json -Depth 8 -Compress
     Set-Content -LiteralPath (Join-Path (Join-Path (Split-Path -Parent $ProjectPath) 'obj') 'project.assets.json') -Encoding utf8 -Value $assets
 }
@@ -398,6 +400,35 @@ try {
         throw 'The MSBuild sensitive-pack guard did not reject the synthetic sensitive input.'
     }
     Write-Output 'MSBuild sensitive-pack guard rejection: PASS (.env probe rejected before nuspec generation).'
+
+    $repositoryInternalProbePath = Join-Path $repositoryRoot (Join-Path 'tests' 'feedfence-pack-guard-probe.txt')
+    $repositoryInternalProbe = Invoke-Captured 'dotnet' @(
+        'msbuild',
+        $shippingProject,
+        '-t:ValidateSensitivePackageInputs',
+        "-p:FeedFenceSensitivePackGuardProbe=$repositoryInternalProbePath",
+        '-nologo'
+    ) $repositoryRoot @{}
+    $repositoryInternalProbeOutput = $repositoryInternalProbe.StandardOutput + $repositoryInternalProbe.StandardError
+    if ($repositoryInternalProbe.ExitCode -eq 0 -or $repositoryInternalProbeOutput -notmatch 'Sensitive pack input rejected') {
+        throw 'The MSBuild sensitive-pack guard did not reject a repository-internal tests input.'
+    }
+    Write-Output 'MSBuild sensitive-pack guard rejection: PASS (repository-internal tests input rejected).'
+
+    foreach ($benignAncestor in @('Temp', 'tmp', 'artifacts')) {
+        $benignProbePath = Join-Path $outputRoot (Join-Path $benignAncestor (Join-Path 'checkout' 'safe-package-input.txt'))
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $benignProbePath) | Out-Null
+        Set-Content -LiteralPath $benignProbePath -Encoding utf8 -Value 'safe package input probe'
+        $benignProbe = Invoke-Captured 'dotnet' @(
+            'msbuild',
+            $shippingProject,
+            '-t:ValidateSensitivePackageInputs',
+            "-p:FeedFenceSensitivePackGuardProbe=$benignProbePath",
+            '-nologo'
+        ) $repositoryRoot @{}
+        Assert-ConsumerResult $benignProbe 0 "sensitive-pack guard benign '$benignAncestor' ancestor"
+    }
+    Write-Output 'MSBuild sensitive-pack guard ancestry: PASS (Temp, tmp, and artifacts ancestors accepted).'
 
     Invoke-Checked 'dotnet' @('pack', $shippingProject, '-c', $Configuration, '--no-restore', "-p:PackageVersion=$PackageVersion", '--output', $shippingOutput)
     $artifacts = @(Get-ChildItem -LiteralPath $shippingOutput -File | Where-Object { $_.Extension -in '.nupkg', '.snupkg' } | Select-Object -ExpandProperty Name)
@@ -555,6 +586,37 @@ try {
     if ($passJson.StandardOutput -cne $passJsonRepeat.StandardOutput) { throw 'Installed JSON output is not byte-deterministic.' }
     if (($passJson.StandardOutput | ConvertFrom-Json).schemaVersion -ne 1) { throw 'Installed JSON schema version is not 1.' }
     Write-Output 'Consumer JSON determinism: PASS (two identical installed-tool runs matched byte-for-byte).'
+
+    $omittedDependencyRoot = Join-Path $consumerRoot 'omitted-declared-dependency'
+    $omittedDependencyObj = Join-Path $omittedDependencyRoot 'obj'
+    New-Item -ItemType Directory -Force -Path $omittedDependencyObj | Out-Null
+    $omittedDependencyProject = Join-Path $omittedDependencyRoot 'Fixture.csproj'
+    Set-Content -LiteralPath $omittedDependencyProject -Encoding utf8 -Value '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Company.Secret" Version="1.0.0" /></ItemGroup></Project>'
+    Set-Content -LiteralPath (Join-Path $omittedDependencyObj 'project.assets.json') -Encoding utf8 -Value '{"version":3,"targets":{"net8.0":{}},"libraries":{},"projectFileDependencyGroups":{"net8.0":["Company.Secret >= 1.0.0"]}}'
+    $omittedDependencyResult = Invoke-Captured $toolCommand.FullName @('check', $omittedDependencyProject, '--config', $pass.Config, '--format', 'text') $consumerRoot $consumerEnvironment
+    Assert-ConsumerResult $omittedDependencyResult 2 'omitted declared dependency mutation'
+    if ($omittedDependencyResult.StandardError -notmatch 'declared dependency') { throw 'The installed omitted-dependency mutation did not explain the incomplete graph.' }
+
+    $zeroPackageRoot = Join-Path $consumerRoot 'zero-package-control'
+    $zeroPackageObj = Join-Path $zeroPackageRoot 'obj'
+    New-Item -ItemType Directory -Force -Path $zeroPackageObj | Out-Null
+    $zeroPackageProject = Join-Path $zeroPackageRoot 'Fixture.csproj'
+    Set-Content -LiteralPath $zeroPackageProject -Encoding utf8 -Value '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>'
+    Set-Content -LiteralPath (Join-Path $zeroPackageObj 'project.assets.json') -Encoding utf8 -Value '{"version":3,"targets":{"net8.0":{}},"libraries":{},"projectFileDependencyGroups":{"net8.0":[]}}'
+    $zeroPackageResult = Invoke-Captured $toolCommand.FullName @('check', $zeroPackageProject, '--config', $pass.Config, '--format', 'text') $consumerRoot $consumerEnvironment
+    Assert-ConsumerResult $zeroPackageResult 0 'true zero-package control'
+    if ($zeroPackageResult.StandardOutput -notmatch '0 resolved packages') { throw 'The installed zero-package control did not report an empty graph.' }
+
+    $dottedSolution = Join-Path $pass.Root 'DottedFolder.sln'
+    @(
+        'Microsoft Visual Studio Solution File, Format Version 12.00',
+        'Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs.v2", "docs.v2", "{11111111-1111-1111-1111-111111111111}"',
+        'EndProject',
+        'Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Fixture", "project\Fixture.csproj", "{22222222-2222-2222-2222-222222222222}"',
+        'EndProject'
+    ) | Set-Content -LiteralPath $dottedSolution -Encoding utf8
+    $dottedSolutionResult = Invoke-Captured $toolCommand.FullName @('check', $dottedSolution, '--config', $pass.Config, '--format', 'text') $consumerRoot $consumerEnvironment
+    Assert-ConsumerResult $dottedSolutionResult 0 'dotted solution-folder fixture'
 
     Invoke-InstalledEquivalenceCases $toolCommand $consumerRoot $consumerEnvironment
 

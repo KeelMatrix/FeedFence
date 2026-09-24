@@ -4,6 +4,7 @@ namespace KeelMatrix.FeedFence;
 
 internal static class RestoreGraphReader
 {
+    private static readonly string[] DeclaredDependencySeparators = [" >= ", " > ", " <= ", " < ", " (>= ", " (> ", " (<= ", " (< "];
     private static readonly HashSet<string> ValidLibraryTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         "package",
@@ -54,13 +55,16 @@ internal static class RestoreGraphReader
         using var document = ParseJson(path, MaxBytes: 32 * 1024 * 1024, "project.assets.json");
         var root = document.RootElement;
         if (!root.TryGetProperty("targets", out var targets) || targets.ValueKind != JsonValueKind.Object ||
-            !root.TryGetProperty("libraries", out var libraries) || libraries.ValueKind != JsonValueKind.Object)
+            !root.TryGetProperty("libraries", out var libraries) || libraries.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty("projectFileDependencyGroups", out var dependencyGroups) || dependencyGroups.ValueKind != JsonValueKind.Object)
         {
             throw new AnalysisException("project.assets.json is incomplete; run restore first, then run FeedFence again.");
         }
 
         EnsureCount(targets, InputLimits.MaxAssetTargetCount, "project.assets.json contains too many target frameworks.");
+        EnsureCount(dependencyGroups, InputLimits.MaxAssetFrameworkCount, "project.assets.json contains too many dependency groups.");
         var targetLibraryNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var targetDependencyNames = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         var targetFrameworkCount = 0;
         var targetLibraryCount = 0;
         foreach (var target in targets.EnumerateObject())
@@ -71,6 +75,7 @@ internal static class RestoreGraphReader
                 throw new AnalysisException("project.assets.json contains too many or invalid target frameworks.");
             }
 
+            var frameworkDependencyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var targetLibrary in target.Value.EnumerateObject())
             {
                 targetLibraryCount++;
@@ -79,16 +84,12 @@ internal static class RestoreGraphReader
                     throw new AnalysisException("project.assets.json contains too many target library references.");
                 }
 
-                if (!targetLibrary.Name.Contains('/'))
-                {
-                    throw new AnalysisException("project.assets.json contains an invalid target library identity.");
-                }
-
                 if (targetLibrary.Value.ValueKind != JsonValueKind.Object)
                 {
                     throw new AnalysisException($"project.assets.json target library '{targetLibrary.Name}' is malformed.");
                 }
 
+                frameworkDependencyNames.Add(GetLibraryName(targetLibrary.Name));
                 targetLibraryNames.Add(targetLibrary.Name);
                 if (!libraries.TryGetProperty(targetLibrary.Name, out var libraryRecord))
                 {
@@ -97,7 +98,14 @@ internal static class RestoreGraphReader
 
                 ValidateLibraryRecord(targetLibrary.Name, libraryRecord);
             }
+
+            if (!targetDependencyNames.TryAdd(target.Name, frameworkDependencyNames))
+            {
+                throw new AnalysisException("project.assets.json contains duplicate target framework identities.");
+            }
         }
+
+        ValidateDeclaredDependencies(dependencyGroups, targetDependencyNames);
 
         EnsureCount(libraries, InputLimits.MaxAssetLibraryCount, "project.assets.json contains too many libraries.");
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -110,18 +118,14 @@ internal static class RestoreGraphReader
                 continue;
             }
 
-            var separator = library.Name.LastIndexOf('/');
-            if (separator <= 0 || separator == library.Name.Length - 1)
-            {
-                throw new AnalysisException("project.assets.json contains an invalid package identity.");
-            }
+            var packageId = GetLibraryName(library.Name);
 
             if (!targetLibraryNames.Contains(library.Name))
             {
                 throw new AnalysisException("project.assets.json is incomplete; a package library is not present in any target framework.");
             }
 
-            result.Add(library.Name[..separator]);
+            result.Add(packageId);
             if (result.Count > InputLimits.MaxResolvedPackageCount)
             {
                 throw new AnalysisException("project.assets.json contains too many resolved packages.");
@@ -129,6 +133,79 @@ internal static class RestoreGraphReader
         }
 
         return result;
+    }
+
+    private static void ValidateDeclaredDependencies(
+        JsonElement dependencyGroups,
+        IReadOnlyDictionary<string, HashSet<string>> targetDependencyNames)
+    {
+        var declaredDependencyCount = 0;
+        foreach (var dependencyGroup in dependencyGroups.EnumerateObject())
+        {
+            if (dependencyGroup.Value.ValueKind != JsonValueKind.Array)
+            {
+                throw new AnalysisException("project.assets.json contains an invalid dependency group.");
+            }
+
+            if (dependencyGroup.Value.GetArrayLength() == 0)
+            {
+                continue;
+            }
+
+            var matchingTargets = targetDependencyNames
+                .Where(target =>
+                    string.Equals(target.Key, dependencyGroup.Name, StringComparison.OrdinalIgnoreCase) ||
+                    target.Key.StartsWith(dependencyGroup.Name + "/", StringComparison.OrdinalIgnoreCase))
+                .Select(target => target.Value)
+                .ToArray();
+            if (matchingTargets.Length == 0)
+            {
+                throw new AnalysisException("project.assets.json is incomplete; a dependency group has no matching target framework.");
+            }
+
+            foreach (var dependency in dependencyGroup.Value.EnumerateArray())
+            {
+                if (++declaredDependencyCount > InputLimits.MaxAssetTargetLibraryCount ||
+                    dependency.ValueKind != JsonValueKind.String ||
+                    string.IsNullOrWhiteSpace(dependency.GetString()))
+                {
+                    throw new AnalysisException("project.assets.json contains too many or invalid declared dependencies.");
+                }
+
+                var dependencyName = GetDeclaredDependencyName(dependency.GetString()!);
+                if (matchingTargets.Any(target => !target.Contains(dependencyName)))
+                {
+                    throw new AnalysisException("project.assets.json is incomplete; a declared dependency is not represented in its target framework.");
+                }
+            }
+        }
+    }
+
+    private static string GetDeclaredDependencyName(string declaration)
+    {
+        var end = DeclaredDependencySeparators
+            .Select(separator => declaration.IndexOf(separator, StringComparison.Ordinal))
+            .Where(index => index >= 0)
+            .DefaultIfEmpty(declaration.Length)
+            .Min();
+        var name = declaration[..end].Trim();
+        if (name.Length == 0)
+        {
+            throw new AnalysisException("project.assets.json contains an invalid declared dependency.");
+        }
+
+        return name;
+    }
+
+    private static string GetLibraryName(string identity)
+    {
+        var separator = identity.LastIndexOf('/');
+        if (separator <= 0 || separator == identity.Length - 1)
+        {
+            throw new AnalysisException("project.assets.json contains an invalid library identity.");
+        }
+
+        return identity[..separator];
     }
 
     private static void ValidateLibraryRecord(string identity, JsonElement library)

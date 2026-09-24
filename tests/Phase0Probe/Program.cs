@@ -580,6 +580,10 @@ internal sealed class ProbeRunner
             ["libraries"] = new Dictionary<string, object>
             {
                 [$"{packageId}/1.0.0"] = new { type = "package" }
+            },
+            ["projectFileDependencyGroups"] = new Dictionary<string, object>
+            {
+                ["net8.0"] = new List<string> { $"{packageId} >= 1.0.0" }
             }
         };
         File.WriteAllText(Path.Combine(objDirectory, "project.assets.json"), JsonSerializer.Serialize(assets), new UTF8Encoding(false));

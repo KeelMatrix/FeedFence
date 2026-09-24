@@ -58,6 +58,7 @@ try {
         version = 3
         targets = @{ 'net8.0' = @{ 'Fixture.Package/1.0.0' = @{} } }
         libraries = @{ 'Fixture.Package/1.0.0' = @{ type = 'package' } }
+        projectFileDependencyGroups = @{ 'net8.0' = @('Fixture.Package >= 1.0.0') }
     } | ConvertTo-Json -Depth 8 -Compress
     Set-Content -LiteralPath (Join-Path (Join-Path $projectDirectory 'obj') 'project.assets.json') -Encoding utf8 -Value $assets
     $fileUri = [Uri]::new($feedDirectory).AbsoluteUri
