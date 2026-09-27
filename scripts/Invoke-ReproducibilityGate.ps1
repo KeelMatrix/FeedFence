@@ -79,7 +79,9 @@ function Assert-BinarySame([string]$Label, [string]$FirstPath, [string]$SecondPa
     $limit = [Math]::Min($first.Length, $second.Length)
     for ($index = 0; $index -lt $limit -and $sample.Count -lt 8; $index++) {
         if ($first[$index] -ne $second[$index]) {
-            $sample.Add("0x{0:X8}: {1:X2} != {2:X2}" -f $index, $first[$index], $second[$index])
+            $left = [int]$first[$index]
+            $right = [int]$second[$index]
+            $sample.Add(("0x{0:X8}: {1:X2} != {2:X2}" -f [int]$index, $left, $right))
         }
     }
 
