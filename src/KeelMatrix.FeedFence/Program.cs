@@ -6,6 +6,13 @@ internal static class Program
     {
         try
         {
+            Console.OutputEncoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+            Console.SetError(new System.IO.StreamWriter(
+                Console.OpenStandardError(),
+                new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false))
+            {
+                AutoFlush = true
+            });
             var options = CliOptions.Parse(args);
             if (options.ShowHelp)
             {
@@ -74,6 +81,7 @@ internal sealed record CliOptions(
             "feedfence --version",
             "",
             "Checks already-restored package IDs against effective NuGet source policy.",
+            "Package IDs use NuGet's normal package-ID validation; unsafe or malformed identities fail closed.",
             "Declared dependency targets must use supported NuGet values and compatible assets records.",
             "FeedFence never restores packages or contacts package feeds during analysis.",
             "",

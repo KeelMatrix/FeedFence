@@ -28,6 +28,8 @@ internal sealed class Fixture : IDisposable
 {
     private static readonly string[] CompanySecretDependencies = ["Company.Secret"];
     private static readonly string[] CompanySecretDependencyGroup = ["Company.Secret >= 1.0.0"];
+    private static readonly string[] ReportFormats = ["text", "json", "sarif"];
+    private static readonly string[] ValidIdentityPolicyPatterns = ["日本語*", "A.B-C_D", "aaa*", "A\u0301*"];
     private readonly string _root = Path.Combine(Path.GetTempPath(), "feedfence-cli-tests-" + Guid.NewGuid().ToString("N"));
     private readonly string _tool;
 
@@ -46,6 +48,7 @@ internal sealed class Fixture : IDisposable
         AssertProcess(0, "--help");
         var help = Run("--help");
         AssertContains(help.Output, "feedfence check [path] [options]");
+        AssertContains(help.Output, "NuGet's normal package-ID validation");
         AssertContains(help.Output, "Declared dependency targets must use supported NuGet values and compatible assets records.");
         AssertProcess(0, "--version");
 
@@ -212,7 +215,7 @@ internal sealed class Fixture : IDisposable
 
         var sensitiveSourceKey = "https://user:password@example.invalid/nuget/index.json?token=topsecret";
         var sensitiveSource = CreateCase("sensitive-source-key", ["Feed.Secret"], [], [sensitiveSourceKey, "safe"], "https://feed.example.invalid/index.json");
-        foreach (var format in new[] { "text", "json", "sarif" })
+        foreach (var format in ReportFormats)
         {
             var sensitiveResult = Run("check", sensitiveSource.Project, "--config", sensitiveSource.Config!, "--format", format);
             AssertContains(sensitiveResult.Output, "source-");
@@ -701,11 +704,63 @@ internal sealed class Fixture : IDisposable
             ["project"] = new Dictionary<string, object> { ["frameworks"] = new Dictionary<string, object> { ["net8.0"] = new Dictionary<string, object> { ["dependencies"] = new Dictionary<string, object> { [rawArgument] = new { target = "Package", version = "[1.0.0, )" } } } } }
         };
         File.WriteAllText(Path.Combine(Path.GetDirectoryName(invalidIdentity.Project)!, "obj", "project.assets.json"), JsonSerializer.Serialize(identityAssets), Encoding.UTF8);
-        var invalidIdentityResult = Run("check", invalidIdentity.Project, "--config", invalidIdentity.Config!);
-        AssertEqual(2, invalidIdentityResult.ExitCode, "credential-shaped package identity exit code");
-        AssertNotContains(invalidIdentityResult.Output, rawArgument);
-        AssertNotContains(invalidIdentityResult.Output, "password");
-        AssertNotContains(invalidIdentityResult.Output, "topsecret");
+        foreach (var format in ReportFormats)
+        {
+            var result = Run("check", invalidIdentity.Project, "--config", invalidIdentity.Config!, "--format", format);
+            AssertEqual(2, result.ExitCode, $"credential-shaped package identity {format} exit code");
+            AssertNotContains(result.Output, rawArgument);
+            AssertNotContains(result.Output, "password");
+            AssertNotContains(result.Output, "topsecret");
+        }
+
+        var longPackageId = new string('a', 300);
+        var combiningMarkPackageId = "A\u0301.B";
+        var validPackageIds = new[] { "日本語パッケージ", "A.B-C_D", longPackageId, combiningMarkPackageId };
+        var validIdentities = CreateCase(
+            "valid-package-identities",
+            validPackageIds,
+            ["<packageSourceMapping><packageSource key=\"public\"><package pattern=\"*\" /></packageSource></packageSourceMapping>"],
+            ["public"]);
+        WritePackageProject(validIdentities.Project, validPackageIds);
+        var validIdentityPolicy = Path.Combine(validIdentities.Root, "valid-identities-policy.json");
+        File.WriteAllText(
+            validIdentityPolicy,
+            JsonSerializer.Serialize(new
+            {
+                version = 1,
+                sourceTrust = new Dictionary<string, string> { ["public"] = "public" },
+                protectedPackages = ValidIdentityPolicyPatterns
+            }),
+            Encoding.UTF8);
+
+        foreach (var format in ReportFormats)
+        {
+            var result = Run("check", validIdentities.Project, "--config", validIdentities.Config!, "--policy", validIdentityPolicy, "--format", format);
+            AssertEqual(1, result.ExitCode, $"valid package identity {format} exit code");
+            var reportText = result.StandardOutput;
+            if (format == "json")
+            {
+                using var report = JsonDocument.Parse(result.StandardOutput);
+                reportText = string.Join(
+                    "\n",
+                    report.RootElement.GetProperty("diagnostics").EnumerateArray().Select(diagnostic =>
+                        diagnostic.GetProperty("message").GetString() + " " +
+                        (diagnostic.TryGetProperty("packageId", out var packageId) ? packageId.GetString() : string.Empty)));
+            }
+            else if (format == "sarif")
+            {
+                using var report = JsonDocument.Parse(result.StandardOutput);
+                reportText = string.Join(
+                    "\n",
+                    report.RootElement.GetProperty("runs")[0].GetProperty("results").EnumerateArray()
+                        .Select(diagnostic => diagnostic.GetProperty("message").GetProperty("text").GetString()));
+            }
+
+            foreach (var packageId in validPackageIds)
+            {
+                AssertContains(reportText, packageId);
+            }
+        }
     }
 
     private void RunReportContractCases()
@@ -1253,7 +1308,9 @@ internal sealed class Fixture : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
-            CreateNoWindow = true
+            CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8
         };
         startInfo.Environment["KEELMATRIX_NO_TELEMETRY"] = "1";
         startInfo.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
@@ -1289,7 +1346,9 @@ internal sealed class Fixture : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
-            CreateNoWindow = true
+            CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8
         };
         startInfo.Environment["KEELMATRIX_NO_TELEMETRY"] = "1";
         startInfo.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";

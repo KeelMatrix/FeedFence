@@ -1,4 +1,5 @@
 using System.Xml;
+using NuGet.Packaging;
 
 namespace KeelMatrix.FeedFence;
 
@@ -72,8 +73,7 @@ internal static class InputIdentity
 {
     public static string RequirePackageId(string value, string message)
     {
-        if (string.IsNullOrWhiteSpace(value) || value.Length > 256 ||
-            value.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not '.' and not '-' and not '_'))
+        if (!PackageIdValidator.IsValidPackageId(value, useRestrictedCharacterSet: false))
         {
             throw new AnalysisException(message);
         }

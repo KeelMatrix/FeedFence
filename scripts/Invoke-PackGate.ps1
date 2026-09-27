@@ -31,6 +31,8 @@ function Invoke-Captured([string]$FilePath, [string[]]$Arguments, [string]$Worki
     $startInfo.RedirectStandardError = $true
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
+    $startInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $startInfo.StandardErrorEncoding = [System.Text.Encoding]::UTF8
     foreach ($argument in $Arguments) {
         $startInfo.ArgumentList.Add($argument)
     }
@@ -236,23 +238,35 @@ function Get-PngDimensions([string]$Path) {
     }
 }
 
-function New-ConsumerFixture([string]$Root, [string]$Name, [string[]]$SourceKeys) {
+function New-ConsumerFixture([string]$Root, [string]$Name, [string[]]$SourceKeys, [string[]]$PackageIds = @('Fixture.Package')) {
     $fixtureRoot = Join-Path $Root $Name
     $projectDirectory = Join-Path $fixtureRoot 'project'
     New-Item -ItemType Directory -Force -Path (Join-Path $projectDirectory 'obj') | Out-Null
     $projectPath = Join-Path $projectDirectory 'Fixture.csproj'
-    Set-Content -LiteralPath $projectPath -Encoding utf8 -Value '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Fixture.Package" Version="1.0.0" /></ItemGroup></Project>'
+    $packageReferenceXml = $PackageIds | ForEach-Object {
+        '<PackageReference Include="' + [System.Security.SecurityElement]::Escape($_) + '" Version="1.0.0" />'
+    }
+    Set-Content -LiteralPath $projectPath -Encoding utf8 -Value ('<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup>' + ($packageReferenceXml -join '') + '</ItemGroup></Project>')
+    $targetLibraries = @{}
+    $libraries = @{}
+    $dependencyNames = @()
+    $dependencies = @{}
+    foreach ($packageId in $PackageIds) {
+        $identity = "$packageId/1.0.0"
+        $targetLibraries[$identity] = @{ type = 'package' }
+        $libraries[$identity] = @{ type = 'package' }
+        $dependencyNames += "$packageId >= 1.0.0"
+        $dependencies[$packageId] = @{ target = 'Package'; version = '[1.0.0, )' }
+    }
     $assets = @{
         version = 3
-        targets = @{ 'net8.0' = @{ 'Fixture.Package/1.0.0' = @{ type = 'package' } } }
-        libraries = @{ 'Fixture.Package/1.0.0' = @{ type = 'package' } }
-        projectFileDependencyGroups = @{ 'net8.0' = @('Fixture.Package >= 1.0.0') }
+        targets = @{ 'net8.0' = $targetLibraries }
+        libraries = $libraries
+        projectFileDependencyGroups = @{ 'net8.0' = $dependencyNames }
         project = @{
             frameworks = @{
                 'net8.0' = @{
-                    dependencies = @{
-                        'Fixture.Package' = @{ target = 'Package'; version = '[1.0.0, )' }
-                    }
+                    dependencies = $dependencies
                 }
             }
         }
@@ -537,9 +551,14 @@ try {
         'tools/net8.0/any/KeelMatrix.FeedFence.pdb',
         'tools/net8.0/any/KeelMatrix.FeedFence.runtimeconfig.json',
         'tools/net8.0/any/KeelMatrix.Telemetry.dll',
+        'tools/net8.0/any/Newtonsoft.Json.dll',
         'tools/net8.0/any/NuGet.Common.dll',
         'tools/net8.0/any/NuGet.Configuration.dll',
         'tools/net8.0/any/NuGet.Frameworks.dll',
+        'tools/net8.0/any/NuGet.Packaging.dll',
+        'tools/net8.0/any/NuGet.Versioning.dll',
+        'tools/net8.0/any/runtimes/win/lib/net8.0/System.Security.Cryptography.Pkcs.dll',
+        'tools/net8.0/any/System.Security.Cryptography.Pkcs.dll',
         'tools/net8.0/any/System.Security.Cryptography.ProtectedData.dll'
     )
     $snupkgStaticEntries = @(
@@ -574,9 +593,13 @@ try {
     $expectedRuntimeLibraries = @(
         "KeelMatrix.FeedFence/$PackageVersion",
         'KeelMatrix.Telemetry/0.1.1',
+        'Newtonsoft.Json/13.0.3',
         'NuGet.Common/7.9.0',
         'NuGet.Configuration/7.9.0',
         'NuGet.Frameworks/7.9.0',
+        'NuGet.Packaging/7.9.0',
+        'NuGet.Versioning/7.9.0',
+        'System.Security.Cryptography.Pkcs/8.0.1',
         'System.Security.Cryptography.ProtectedData/8.0.0'
     ) | Sort-Object
     $actualRuntimeLibraries = @($deps.libraries.Keys | Sort-Object)
@@ -665,6 +688,35 @@ try {
     if ($passJson.StandardOutput -cne $passJsonRepeat.StandardOutput) { throw 'Installed JSON output is not byte-deterministic.' }
     if (($passJson.StandardOutput | ConvertFrom-Json).schemaVersion -ne 1) { throw 'Installed JSON schema version is not 1.' }
     Write-Output 'Consumer JSON determinism: PASS (two identical installed-tool runs matched byte-for-byte).'
+
+    $validPackageIds = @('日本語パッケージ', 'A.B-C_D', ('a' * 300))
+    $validIdentityFixture = New-ConsumerFixture $consumerRoot 'valid-package-identities' @('local') $validPackageIds
+    $validIdentityPolicy = Join-Path $validIdentityFixture.Root 'feedfence.json'
+    $validIdentityPolicyText = @{
+        version = 1
+        sourceTrust = @{ public = 'public' }
+        protectedPackages = @('日本語*', 'A.B-C_D', 'aaa*')
+    } | ConvertTo-Json -Compress
+    Set-Content -LiteralPath $validIdentityPolicy -Encoding utf8 -Value $validIdentityPolicyText
+    foreach ($format in @('text', 'json', 'sarif')) {
+        $validIdentityResult = Invoke-Captured $toolCommand.FullName @('check', $validIdentityFixture.Project, '--config', $validIdentityFixture.Config, '--policy', $validIdentityPolicy, '--format', $format) $consumerRoot $consumerEnvironment
+        Assert-ConsumerResult $validIdentityResult 1 "valid package identities ($format)"
+        $validIdentityReportText = $validIdentityResult.StandardOutput
+        if ($format -eq 'json') {
+            $validIdentityReport = $validIdentityResult.StandardOutput | ConvertFrom-Json
+            $validIdentityReportText = @($validIdentityReport.diagnostics | ForEach-Object { "$($_.message) $($_.packageId)" }) -join "`n"
+        }
+        elseif ($format -eq 'sarif') {
+            $validIdentityReport = $validIdentityResult.StandardOutput | ConvertFrom-Json
+            $validIdentityReportText = @($validIdentityReport.runs[0].results | ForEach-Object { $_.message.text }) -join "`n"
+        }
+        foreach ($packageId in $validPackageIds) {
+            if (-not $validIdentityReportText.Contains($packageId, [System.StringComparison]::Ordinal)) {
+                throw "Installed $format report omitted valid package identity '$packageId'."
+            }
+        }
+    }
+    Write-Output 'Installed valid package identities: PASS (Unicode, dotted/hyphenated/underscored, and 300-character IDs analyzed through text, JSON, and SARIF reports).'
 
     $omittedDependencyRoot = Join-Path $consumerRoot 'omitted-declared-dependency'
     $omittedDependencyObj = Join-Path $omittedDependencyRoot 'obj'

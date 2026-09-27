@@ -5,7 +5,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$expectedIdentity = 'KeelMatrix <keelmatrix@users.noreply.github.com>'
+$allowedAuthorIdentities = @(
+    'KeelMatrix <keelmatrix@users.noreply.github.com>',
+    'KeelMatrix <keelmatrix@gmail.com>'
+)
+$allowedCommitterIdentities = @(
+    'KeelMatrix <keelmatrix@users.noreply.github.com>',
+    'GitHub <noreply@github.com>'
+)
 
 function Invoke-HygieneCheck {
     param([string]$Root)
@@ -24,10 +31,10 @@ function Invoke-HygieneCheck {
         $commit = $fields[0]
         $author = if ($fields.Count -gt 2) { "$($fields[1]) <$($fields[2])>" } else { '' }
         $committer = if ($fields.Count -gt 4) { "$($fields[3]) <$($fields[4])>" } else { '' }
-        if ($author -cne $expectedIdentity) {
+        if ($author -cnotin $allowedAuthorIdentities) {
             $findings.Add("commit $commit has unexpected author identity '$author'")
         }
-        if ($committer -cne $expectedIdentity) {
+        if ($committer -cnotin $allowedCommitterIdentities) {
             $findings.Add("commit $commit has unexpected committer identity '$committer'")
         }
 
@@ -80,7 +87,7 @@ function Invoke-HygieneCheck {
     }
 
     Write-Output "Repository hygiene: inspected $($commitRecords.Count) reachable commit record(s) and $($trackedFiles.Count) tracked scoped file(s)."
-    Write-Output 'PASS: expected KeelMatrix author/committer identities and no prohibited authorship trailer or internal/orchestration wording found.'
+    Write-Output 'PASS: approved KeelMatrix authors and KeelMatrix/GitHub web-flow committers passed with no prohibited authorship trailer or internal/orchestration wording.'
 }
 
 function Invoke-GitChecked {
@@ -129,6 +136,15 @@ function Assert-HygieneRejects {
     }
 }
 
+function Assert-HygieneAccepts {
+    param([string]$Root)
+
+    & $PSCommandPath -RepositoryRoot $Root *> $null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Self-test expected the hygiene guard to accept '$Root'."
+    }
+}
+
 if ($SelfTest) {
     $selfTestRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('feedfence-hygiene-' + [guid]::NewGuid().ToString('N'))
     try {
@@ -140,6 +156,15 @@ if ($SelfTest) {
         if ($LASTEXITCODE -ne 0) { throw 'Unable to create the wrong-author synthetic commit.' }
         Assert-HygieneRejects $wrongAuthorRoot 'unexpected author identity'
         Write-Output 'Repository hygiene self-test: wrong-author commit rejected.'
+
+        $webFlowRoot = Join-Path $selfTestRoot 'github-web-flow'
+        New-SyntheticRepository $webFlowRoot
+        Set-Content -LiteralPath (Join-Path $webFlowRoot 'web-flow.txt') -Encoding utf8 -Value 'GitHub web flow'
+        Invoke-GitChecked $webFlowRoot @('add', 'web-flow.txt')
+        & git -C $webFlowRoot -c user.name='GitHub' -c user.email='noreply@github.com' commit --quiet --author='KeelMatrix <keelmatrix@users.noreply.github.com>' -m 'synthetic GitHub web flow' *> $null
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to create the GitHub web-flow synthetic commit.' }
+        Assert-HygieneAccepts $webFlowRoot
+        Write-Output 'Repository hygiene self-test: approved GitHub web-flow committer accepted.'
 
         $trailerRoot = Join-Path $selfTestRoot 'prohibited-trailer'
         New-SyntheticRepository $trailerRoot

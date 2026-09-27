@@ -19,6 +19,8 @@
 
 ### Changed
 
+- Package identity checks now use NuGet's normal validator, preserving valid Unicode and long IDs while rejecting unsafe or malformed identities before report rendering.
+- Repository hygiene now accepts the approved GitHub web-flow committer for valid KeelMatrix-authored commits while retaining prohibited-attribution and internal-wording checks.
 - Schema-v1 policy parsing now rejects unknown and duplicate members, restore
   validation rejects incomplete or type-laundered graphs, and machine reports
   use one documented JSON shape with redacted untrusted identities.

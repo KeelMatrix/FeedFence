@@ -12,6 +12,8 @@ feedfence check
 
 FeedFence reads existing `project.assets.json` and/or `packages.lock.json`. For assets files, every declared dependency in `projectFileDependencyGroups` must be represented in the corresponding framework target and library graph. Every dependency identified as a package by `project.frameworks.<tfm>.dependencies` must resolve to identity-matched, package-typed target and library records. An unexplained omission or type conflict fails with exit code `2`; a genuine SDK `ProjectReference` or empty declared-and-resolved package graph remains valid. FeedFence never runs restore, contacts a package feed, invokes a credential provider, or connects to a database. Restore the repository first.
 
+Package IDs use NuGet's normal package-ID validation, including Unicode and long valid IDs. Unsafe or malformed identities such as credential-shaped URLs, control-character payloads, quotes, backslashes, and path-like values fail closed before they can reach reports.
+
 ## Tool lifecycle
 
 Global tool:
