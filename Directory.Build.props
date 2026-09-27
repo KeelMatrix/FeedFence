@@ -4,8 +4,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <Deterministic>true</Deterministic>
+    <DeterministicSourcePaths>true</DeterministicSourcePaths>
     <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
-    <PathMap>$(MSBuildThisFileDirectory)=/_/</PathMap>
+    <PathMap>$(MSBuildProjectDirectory)=/_/</PathMap>
     <DebugType>portable</DebugType>
     <DebugSymbols>true</DebugSymbols>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
