@@ -544,6 +544,24 @@ internal sealed class Fixture : IDisposable
         AssertEqual(2, conflictingSelectorResult.ExitCode, "conflicting selector exit code");
         AssertContains(conflictingSelectorResult.Output, "conflicting package pattern selectors");
 
+        var conflictingRulePolicy = Path.Combine(wrongTypedSelector.Root, "conflicting-rule.json");
+        File.WriteAllText(
+            conflictingRulePolicy,
+            "{\"version\":1,\"sourceTrust\":{\"public\":\"public\"},\"privatePackages\":[{\"pattern\":\"Company.*\",\"packagePattern\":\"Other.*\"}]}",
+            Encoding.UTF8);
+        var conflictingRuleResult = Run("check", wrongTypedSelector.Project, "--config", wrongTypedSelector.Config!, "--policy", conflictingRulePolicy);
+        AssertEqual(2, conflictingRuleResult.ExitCode, "conflicting package rule selector exit code");
+        AssertContains(conflictingRuleResult.Output, "conflicting package pattern selectors");
+
+        var conflictingSourceTrustPolicy = Path.Combine(wrongTypedSelector.Root, "conflicting-source-trust.json");
+        File.WriteAllText(
+            conflictingSourceTrustPolicy,
+            "{\"version\":1,\"sourceTrust\":{\"public\":\"public\"},\"sources\":{\"public\":\"private\"},\"privatePackages\":[\"Company.*\"]}",
+            Encoding.UTF8);
+        var conflictingSourceTrustResult = Run("check", wrongTypedSelector.Project, "--config", wrongTypedSelector.Config!, "--policy", conflictingSourceTrustPolicy);
+        AssertEqual(2, conflictingSourceTrustResult.ExitCode, "conflicting source trust selector exit code");
+        AssertContains(conflictingSourceTrustResult.Output, "conflicting source trust selectors");
+
         var partiallyExcepted = CreateCase("partially-excepted", ["Company.Internal"],
             ["<packageSourceMapping><packageSource key=\"public\"><package pattern=\"Company.*\" /></packageSource><packageSource key=\"other\"><package pattern=\"Company.*\" /></packageSource></packageSourceMapping>"],
             ["public", "other"]);

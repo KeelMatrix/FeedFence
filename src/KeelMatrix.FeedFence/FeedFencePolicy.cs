@@ -95,7 +95,14 @@ internal sealed class FeedFencePolicy
 
     private static Dictionary<string, string> ParseSourceTrust(JsonElement root)
     {
-        var propertyName = root.TryGetProperty("sourceTrust", out _) ? "sourceTrust" : "sources";
+        var hasSourceTrust = root.TryGetProperty("sourceTrust", out _);
+        var hasSources = root.TryGetProperty("sources", out _);
+        if (hasSourceTrust && hasSources)
+        {
+            throw new AnalysisException("FeedFence policy contains conflicting source trust selectors.");
+        }
+
+        var propertyName = hasSourceTrust ? "sourceTrust" : "sources";
         if (!root.TryGetProperty(propertyName, out var sources))
         {
             return new(StringComparer.OrdinalIgnoreCase);
@@ -150,7 +157,7 @@ internal sealed class FeedFencePolicy
             }
             else if (element.ValueKind == JsonValueKind.Object)
             {
-                pattern = ReadString(element, "pattern") ?? ReadString(element, "packagePattern");
+                pattern = ReadSelector(element, "pattern", "packagePattern", "package pattern");
                 allowedSources = ReadStringArray(element, "allowedSources").Cast<string>().ToArray();
             }
             else
