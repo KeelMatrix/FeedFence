@@ -40,11 +40,24 @@ function Invoke-Restore([string]$Root, [string]$PackagesPath) {
     [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($output -join [Environment]::NewLine) }
 }
 
+function Get-PhysicalDirectory([string]$Path) {
+    if ([OperatingSystem]::IsWindows()) {
+        return (Resolve-Path -LiteralPath $Path).Path
+    }
+
+    $physical = (& realpath -- $Path).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($physical)) {
+        throw "Unable to resolve temporary directory physically: $Path"
+    }
+    return $physical
+}
+
 function Invoke-Contract {
     Assert-WorkflowRestoreContract
     Assert-TrackedLockFiles
 
-    $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('feedfence-lock-contract-' + [guid]::NewGuid().ToString('N'))
+    $tempParent = Get-PhysicalDirectory ([IO.Path]::GetTempPath())
+    $tempRoot = Join-Path $tempParent ('feedfence-lock-contract-' + [guid]::NewGuid().ToString('N'))
     try {
         New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
         $cleanRoot = Join-Path $tempRoot 'clean'

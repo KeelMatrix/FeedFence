@@ -13,6 +13,16 @@ $scratchParent = if (-not [string]::IsNullOrWhiteSpace($env:PAPERCLIP_RUN_SCRATC
 else {
     [IO.Path]::GetTempPath()
 }
+$scratchParent = if ([OperatingSystem]::IsWindows()) {
+    (Resolve-Path -LiteralPath $scratchParent).Path
+}
+else {
+    $physicalScratchParent = (& realpath -- $scratchParent).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($physicalScratchParent)) {
+        throw "Unable to resolve reproducibility scratch directory physically: $scratchParent"
+    }
+    $physicalScratchParent
+}
 $scratchRoot = Join-Path $scratchParent ('feedfence-repro-' + [guid]::NewGuid().ToString('N'))
 
 function Invoke-Checked([string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory) {
