@@ -35,13 +35,8 @@ function Assert-TrackedLockFiles {
     }
 }
 
-function Invoke-Restore([string]$Root, [string]$PackagesPath, [bool]$ForceEvaluate) {
-    $arguments = @('restore', (Join-Path $Root 'KeelMatrix.FeedFence.sln'), '--configfile', (Join-Path $Root 'NuGet.config'), '--packages', $PackagesPath, '--no-cache', '--locked-mode')
-    if ($ForceEvaluate) {
-        $arguments += '--force-evaluate'
-    }
-
-    $output = & dotnet @arguments 2>&1
+function Invoke-Restore([string]$Root, [string]$PackagesPath) {
+    $output = & dotnet restore (Join-Path $Root 'KeelMatrix.FeedFence.sln') --configfile (Join-Path $Root 'NuGet.config') --packages $PackagesPath --no-cache --locked-mode 2>&1
     [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($output -join [Environment]::NewLine) }
 }
 
@@ -52,15 +47,17 @@ function Invoke-Contract {
     $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('feedfence-lock-contract-' + [guid]::NewGuid().ToString('N'))
     try {
         New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-        $current = Invoke-Restore $repositoryRoot (Join-Path $tempRoot 'current-packages') $true
-        if ($current.ExitCode -ne 0) {
-            throw "Committed lock graph did not restore in locked mode: $($current.Output)"
-        }
+        $cleanRoot = Join-Path $tempRoot 'clean'
+        & git clone --quiet --no-local $repositoryRoot $cleanRoot
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to create the clean lock-contract clone.' }
+
+        $current = Invoke-Restore $cleanRoot (Join-Path $cleanRoot 'packages')
+        if ($current.ExitCode -ne 0) { throw "Committed lock graph did not restore in locked mode: $($current.Output)" }
         Write-Output 'Locked restore with committed graph: PASS.'
 
-        $cloneRoot = Join-Path $tempRoot 'clone'
+        $cloneRoot = Join-Path $tempRoot 'drift'
         & git clone --quiet --no-local $repositoryRoot $cloneRoot
-        if ($LASTEXITCODE -ne 0) { throw 'Unable to create the clean lock-contract clone.' }
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to create the lock-drift clone.' }
 
         $driftPath = Join-Path $cloneRoot 'src/KeelMatrix.FeedFence/packages.lock.json'
         $drift = Get-Content -LiteralPath $driftPath -Raw
@@ -70,7 +67,7 @@ function Invoke-Contract {
             [StringComparison]::Ordinal)
         Set-Content -LiteralPath $driftPath -Encoding utf8 -Value $drift
 
-        $driftResult = Invoke-Restore $cloneRoot (Join-Path $cloneRoot 'packages') $false
+        $driftResult = Invoke-Restore $cloneRoot (Join-Path $cloneRoot 'packages')
         if ($driftResult.ExitCode -eq 0) {
             throw 'Locked restore unexpectedly accepted a mutated committed lock file.'
         }
