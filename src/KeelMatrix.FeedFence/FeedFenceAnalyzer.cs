@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml;
+using System.Xml.Linq;
 using NuGet.Configuration;
 
 namespace KeelMatrix.FeedFence;
@@ -175,7 +176,7 @@ internal sealed class FeedFenceAnalyzer
                     new Diagnostic(
                         "FF007",
                         DiagnosticSeverity.Violation,
-                        $"{kind} package \"{packageId}\" can resolve from source key \"{RedactLabel(source.Key)}\" outside its declared trust set (pattern \"{rule.Pattern}\").",
+                        $"{kind} package \"{packageId}\" can resolve from source key \"{RedactLabel(source.Key)}\" outside its declared trust set (pattern \"{FormatPattern(rule.Pattern)}\").",
                         packageId,
                         [source.Key]));
             }
@@ -725,6 +726,11 @@ internal static class TargetResolver
         ".fsproj",
         ".vbproj"
     };
+    private static readonly HashSet<string> SupportedSolutionExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".sln",
+        ".slnx"
+    };
 
     public static ProjectTarget Resolve(string? suppliedPath)
     {
@@ -742,7 +748,7 @@ internal static class TargetResolver
         if (File.Exists(fullInput))
         {
             var extension = Path.GetExtension(fullInput);
-            if (extension.Equals(".sln", StringComparison.OrdinalIgnoreCase))
+            if (SupportedSolutionExtensions.Contains(extension))
             {
                 return ResolveSolution(fullInput);
             }
@@ -765,10 +771,17 @@ internal static class TargetResolver
             throw new InvocationException("the supplied solution or project could not be found.");
         }
 
-        var solutions = Directory.EnumerateFiles(fullInput, "*.sln", SearchOption.TopDirectoryOnly).ToArray();
+        var solutions = Directory.EnumerateFiles(fullInput, "*.*", SearchOption.TopDirectoryOnly)
+            .Where(path => SupportedSolutionExtensions.Contains(Path.GetExtension(path)))
+            .ToArray();
         if (solutions.Length == 1)
         {
             return ResolveSolution(solutions[0]);
+        }
+
+        if (solutions.Length > 1)
+        {
+            throw new InvocationException("the current directory contains multiple solutions; supply one solution or project path.");
         }
 
         var projects = SupportedProjectExtensions
@@ -787,13 +800,14 @@ internal static class TargetResolver
     private static ProjectTarget ResolveSolution(string solutionPath)
     {
         var solutionDirectory = Path.GetDirectoryName(solutionPath)!;
-        var declaredProjects = File.ReadLines(solutionPath)
-            .Select(line => SolutionProjectLine.Match(line))
-            .Where(match => match.Success)
-            .Where(match => !string.Equals(match.Groups["type"].Value, SolutionFolderProjectType, StringComparison.OrdinalIgnoreCase))
-            .Select(match => Path.GetFullPath(Path.Combine(solutionDirectory, match.Groups["path"].Value.Replace('\\', Path.DirectorySeparatorChar))))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var declaredProjects = Path.GetExtension(solutionPath).Equals(".slnx", StringComparison.OrdinalIgnoreCase)
+            ? ReadSlnxProjects(solutionPath, solutionDirectory)
+            : File.ReadLines(solutionPath)
+                .Select(line => SolutionProjectLine.Match(line))
+                .Where(match => match.Success)
+                .Where(match => !string.Equals(match.Groups["type"].Value, SolutionFolderProjectType, StringComparison.OrdinalIgnoreCase))
+                .Select(match => Path.GetFullPath(Path.Combine(solutionDirectory, match.Groups["path"].Value.Replace('\\', Path.DirectorySeparatorChar))))
+                .ToArray();
 
         if (declaredProjects.Any(path => !SupportedProjectExtensions.Contains(Path.GetExtension(path))))
         {
@@ -811,6 +825,36 @@ internal static class TargetResolver
         }
 
         return new(FindRepositoryRoot(solutionDirectory), declaredProjects, solutionDirectory);
+    }
+
+    private static string[] ReadSlnxProjects(string solutionPath, string solutionDirectory)
+    {
+        try
+        {
+            var settings = new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit,
+                XmlResolver = null,
+                MaxCharactersInDocument = InputLimits.MaxSolutionBytes
+            };
+            using var reader = XmlReader.Create(solutionPath, settings);
+            var document = XDocument.Load(reader, LoadOptions.None);
+            return document
+                .Descendants()
+                .Where(element => string.Equals(element.Name.LocalName, "Project", StringComparison.Ordinal))
+                .Select(element => element.Attribute("Path")?.Value)
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Select(path => Path.GetFullPath(Path.Combine(solutionDirectory, path!.Replace('\\', Path.DirectorySeparatorChar))))
+                .ToArray();
+        }
+        catch (InvocationException)
+        {
+            throw;
+        }
+        catch
+        {
+            throw new InvocationException("the supplied solution could not be read.");
+        }
     }
 
     private static string FindRepositoryRoot(string start)

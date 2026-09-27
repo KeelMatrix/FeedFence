@@ -12,12 +12,25 @@ $projectPath = Join-Path (Join-Path $repositoryRoot 'src') (Join-Path 'KeelMatri
 $changelogPath = Join-Path $repositoryRoot 'CHANGELOG.md'
 $firstReleaseRemediationPattern = '(?im)\b(?:now|no\s+longer|previously|formerly|used\s+to|fixed|fixes|corrected|resolved|addressed|this\s+removes|this\s+fixes|changed\s+from)\b'
 
+function Assert-ReleaseWorkflowPublishesArtifacts {
+    $workflowPath = Join-Path $repositoryRoot '.github/workflows/release.yml'
+    $workflow = Get-Content -LiteralPath $workflowPath -Raw
+    $pushCount = ([regex]::Matches($workflow, '(?m)^\s*dotnet\s+nuget\s+push\s*$')).Count
+    if ($pushCount -lt 2 -or $workflow -notmatch '(?s)dotnet\s+nuget\s+push.{0,400}\.nupkg' -or $workflow -notmatch '(?s)dotnet\s+nuget\s+push.{0,400}\.snupkg') {
+        throw 'Release workflow must publish both the expected .nupkg and .snupkg artifacts with explicit push commands.'
+    }
+
+    Write-Output 'Release workflow artifact publication: PASS (explicit .nupkg and .snupkg push commands).'
+}
+
 function Invoke-ReleaseContractValidation(
     [string]$ValidationTag,
     [string]$ValidationProjectPath,
     [string]$ValidationChangelogPath,
     [string]$ValidationArtifactDirectory
 ) {
+    Assert-ReleaseWorkflowPublishesArtifacts
+
     if ($ValidationTag -notmatch '^v(?<version>\d+\.\d+\.\d+)$') {
         throw "Malformed release tag '$ValidationTag'. Expected vX.Y.Z."
     }

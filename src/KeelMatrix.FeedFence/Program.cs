@@ -170,7 +170,7 @@ internal sealed record CliOptions(
 
             if (argument.StartsWith("--", StringComparison.Ordinal))
             {
-                throw new InvocationException($"unknown option '{argument}'.");
+                throw new InvocationException("unknown option; use --help for usage.");
             }
 
             if (targetPath is not null)
@@ -257,4 +257,5 @@ internal static class InputLimits
     public const int MaxAssetTargetLibraryCount = 100_000;
     public const int MaxLockFrameworkCount = 256;
     public const int MaxResolvedPackageCount = 50_000;
+    public const int MaxSolutionBytes = 8 * 1024 * 1024;
 }

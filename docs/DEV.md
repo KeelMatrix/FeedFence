@@ -21,7 +21,7 @@ dotnet --info
 Restore with the repository-controlled `NuGet.config`:
 
 ```powershell
-dotnet restore KeelMatrix.FeedFence.sln --configfile NuGet.config --no-cache --force
+dotnet restore KeelMatrix.FeedFence.sln --configfile NuGet.config --no-cache --locked-mode
 dotnet build KeelMatrix.FeedFence.sln -c Release --no-restore
 pwsh ./scripts/Invoke-ReleaseWarningsAsErrors.ps1 -Configuration Release
 dotnet run --project tests/FeedFenceCliTests/KeelMatrix.FeedFence.CliTests.csproj -c Release --no-build
@@ -33,6 +33,8 @@ Run the repository gates:
 ```powershell
 pwsh ./scripts/Invoke-PlatformFixtures.ps1 -Configuration Release
 pwsh ./scripts/Invoke-PackGate.ps1 -Configuration Release
+pwsh ./scripts/Invoke-ReproducibilityGate.ps1 -Configuration Release
+pwsh ./scripts/Invoke-LockContract.ps1
 pwsh ./scripts/Invoke-DependencyAudit.ps1
 pwsh ./scripts/Invoke-RepoHygiene.ps1
 pwsh ./scripts/Invoke-RepoHygiene.ps1 -SelfTest
@@ -61,6 +63,13 @@ SourceLink metadata, sensitive-input rejection, and icon byte identity. It
 installs the exact inspected `.nupkg` from a single-source local feed with
 isolated NuGet caches. The release workflow gives the gate its upload directory,
 so the inspected artifacts are the artifacts uploaded to the publish job.
+
+The package gate normalizes NuGet archive metadata before checking the exact
+archive allowlist. Reproducibility is claimed for shipping DLL/PDB bytes and
+normalized `.nupkg`/`.snupkg` entry names and bytes across clean checkout roots
+and repeated pack; raw ZIP container byte identity is not promised. The lock
+contract proves that the committed graph restores in locked mode and that a
+mutated lock fails closed.
 
 The release contract check is intentionally expected to fail while the
 changelog remains under `[Unreleased]`:

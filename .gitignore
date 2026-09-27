@@ -21,7 +21,6 @@ tests/Phase0Probe/Fixtures/run/
 *.nuget.g.props
 *.nuget.g.targets
 project.assets.json
-packages.lock.json
 TestResults/
 *.log
 

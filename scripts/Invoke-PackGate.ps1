@@ -8,6 +8,7 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $shippingProject = Join-Path (Join-Path $repositoryRoot 'src') (Join-Path 'KeelMatrix.FeedFence' 'KeelMatrix.FeedFence.csproj')
 $probeProject = Join-Path (Join-Path $repositoryRoot 'tests') (Join-Path 'Phase0Probe' 'KeelMatrix.FeedFence.Phase0Probe.csproj')
+$archiveNormalizer = Join-Path $repositoryRoot 'scripts/Normalize-NuGetArchive.ps1'
 $outputRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('feedfence-pack-gate-' + [guid]::NewGuid().ToString('N'))
 $shippingOutput = if ([string]::IsNullOrWhiteSpace($ArtifactDirectory)) {
     Join-Path $outputRoot 'shipping'
@@ -135,6 +136,13 @@ function Get-BytesSha256([byte[]]$Bytes) {
     return [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($Bytes)).ToLowerInvariant()
 }
 
+function Get-DeterministicCorePropertiesName([string]$ArchivePath) {
+    $kind = if ([IO.Path]::GetExtension($ArchivePath) -ieq '.snupkg') { 'snupkg' } else { 'nupkg' }
+    $seed = "KeelMatrix.FeedFence|$kind|$([IO.Path]::GetFileNameWithoutExtension($ArchivePath))"
+    $hash = [Convert]::ToHexString([System.Security.Cryptography.MD5]::HashData([Text.Encoding]::UTF8.GetBytes($seed))).ToLowerInvariant()
+    return "package/services/metadata/core-properties/$hash.psmdcp"
+}
+
 function Assert-ArchiveEntryMatchesFile([string]$ArchivePath, [string]$EntryName, [string]$FilePath, [string]$Label) {
     $archiveHash = Get-BytesSha256 (Get-ArchiveEntryBytes $ArchivePath $EntryName)
     $fileHash = (Get-FileHash -LiteralPath $FilePath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -160,6 +168,9 @@ function Assert-ArchiveAllowlist([string]$ArchivePath, [string[]]$StaticEntries,
     if ($coreProperties.Count -ne 1) {
         throw "$Label must contain exactly one NuGet core-properties entry; found $($coreProperties.Count)."
     }
+
+    $expectedCoreProperties = Get-DeterministicCorePropertiesName $ArchivePath
+    Assert-Equal $coreProperties[0] $expectedCoreProperties "$Label deterministic core-properties entry"
 
     $unexpected = @($entryNames | Where-Object { $_ -notin $StaticEntries -and $_ -notin $coreProperties })
     $missing = @($StaticEntries | Where-Object { $_ -notin $entryNames })
@@ -283,7 +294,10 @@ function New-DependencyTargetFixture([string]$Root, [string]$Name, [string]$Depe
     $objRoot = Join-Path $fixtureRoot 'obj'
     New-Item -ItemType Directory -Force -Path $objRoot | Out-Null
     $projectPath = Join-Path $fixtureRoot 'Fixture.csproj'
-    Set-Content -LiteralPath $projectPath -Encoding utf8 -Value '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Company.Secret" Version="1.0.0" /></ItemGroup></Project>'
+    $declaresPackage = $DependencyTarget -match '(?i)(^|[, ])Package($|[, ])|PackageProjectExternal|^All$'
+    $packageReference = if ($declaresPackage) { '<ItemGroup><PackageReference Include="Company.Secret" Version="1.0.0" /></ItemGroup>' } else { '' }
+    $projectXml = '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>' + $packageReference + '</Project>'
+    Set-Content -LiteralPath $projectPath -Encoding utf8 -Value $projectXml
     $assets = @{
         version = 3
         targets = @{ 'net8.0' = @{ 'Company.Secret/1.0.0' = @{ type = $RecordType } } }
@@ -506,6 +520,9 @@ try {
     $nupkgPath = Join-Path $shippingOutput "KeelMatrix.FeedFence.$PackageVersion.nupkg"
     $snupkgPath = Join-Path $shippingOutput "KeelMatrix.FeedFence.$PackageVersion.snupkg"
     Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+    Invoke-Checked 'pwsh' @('-NoProfile', '-File', $archiveNormalizer, '-Path', $nupkgPath)
+    Invoke-Checked 'pwsh' @('-NoProfile', '-File', $archiveNormalizer, '-Path', $snupkgPath)
 
     $nupkgStaticEntries = @(
         '_rels/.rels',

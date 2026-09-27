@@ -257,7 +257,7 @@ internal sealed class Fixture : IDisposable
         AssertNotContains(redacted.Output, _root);
 
         var disagreement = Path.Combine(Path.GetDirectoryName(specificity.Project)!, "packages.lock.json");
-        File.WriteAllText(disagreement, "{\"version\":2,\"dependencies\":{\"net8.0\":{\"Different.Package\":{\"resolved\":\"1.0.0\"}}}}", Encoding.UTF8);
+        File.WriteAllText(disagreement, "{\"version\":2,\"dependencies\":{\"net8.0\":{\"Different.Package\":{\"type\":\"Transitive\",\"resolved\":\"1.0.0\"}}}}", Encoding.UTF8);
         var disagreementResult = Run("check", specificity.Project, "--config", specificity.Config!);
         AssertEqual(2, disagreementResult.ExitCode, "assets/lock disagreement exit code");
         AssertContains(disagreementResult.Output, "project.assets.json and packages.lock.json disagree");
@@ -498,7 +498,7 @@ internal sealed class Fixture : IDisposable
             Encoding.UTF8);
         var missingLibraryTypeResult = Run("check", missingLibraryType.Project, "--config", missingLibraryType.Config!);
         AssertEqual(2, missingLibraryTypeResult.ExitCode, "missing library type exit code");
-        AssertContains(missingLibraryTypeResult.Output, "library record 'Company.Secret/1.0.0' has invalid type data");
+        AssertContains(missingLibraryTypeResult.Output, "library record 'Company.Secret' has invalid type data");
 
         var zeroPackage = CreateCase("zero-package", [], [], ["public"]);
         var zeroPackageResult = Run("check", zeroPackage.Project, "--config", zeroPackage.Config!);
@@ -574,6 +574,240 @@ internal sealed class Fixture : IDisposable
         AssertEqual(1, partiallyExceptedResult.ExitCode, "partially excepted multi-source exit code");
         AssertContains(partiallyExceptedResult.Output, "\"other\"");
         AssertNotContains(partiallyExceptedResult.Output, "source keys \"public\", \"other\"");
+
+        RunRestoreGraphCompletenessCases();
+        RunStrictPolicySchemaCases();
+        RunIdentityOutputCases();
+        RunReportContractCases();
+        RunSolutionIdentityCases();
+    }
+
+    private void RunRestoreGraphCompletenessCases()
+    {
+        var emptyGraph = CreateCase("declared-package-empty-graph", [], [], ["public"]);
+        WritePackageProject(emptyGraph.Project, ["Company.Secret"]);
+        File.WriteAllText(
+            Path.Combine(Path.GetDirectoryName(emptyGraph.Project)!, "obj", "project.assets.json"),
+            "{\"version\":3,\"targets\":{\"net8.0\":{}},\"libraries\":{},\"projectFileDependencyGroups\":{\"net8.0\":[]},\"project\":{\"frameworks\":{\"net8.0\":{}}}}",
+            Encoding.UTF8);
+        AssertAnalysisFailure(emptyGraph.Project, emptyGraph.Config!, "empty graph with declared package");
+
+        var missingVersion = CreateCase("missing-assets-schema-version", ["Feed.Schema"], [], ["public"]);
+        var missingVersionAssets = File.ReadAllText(Path.Combine(Path.GetDirectoryName(missingVersion.Project)!, "obj", "project.assets.json"));
+        File.WriteAllText(
+            Path.Combine(Path.GetDirectoryName(missingVersion.Project)!, "obj", "project.assets.json"),
+            missingVersionAssets.Replace("{\"version\":3,", "{", StringComparison.Ordinal),
+            Encoding.UTF8);
+        AssertAnalysisFailure(missingVersion.Project, missingVersion.Config!, "missing assets schema version");
+
+        var lockProject = CreateCase("lock-project-type-laundering", [], [], ["public"]);
+        WritePackageProject(lockProject.Project, ["Company.Secret"]);
+        File.Delete(Path.Combine(Path.GetDirectoryName(lockProject.Project)!, "obj", "project.assets.json"));
+        File.WriteAllText(
+            Path.Combine(Path.GetDirectoryName(lockProject.Project)!, "packages.lock.json"),
+            "{\"version\":2,\"dependencies\":{\"net8.0\":{\"Company.Secret\":{\"type\":\"Project\"}}}}",
+            Encoding.UTF8);
+        AssertAnalysisFailure(lockProject.Project, lockProject.Config!, "lock project type laundering");
+
+        var unknownLock = CreateCase("lock-unknown-type", [], [], ["public"]);
+        File.Delete(Path.Combine(Path.GetDirectoryName(unknownLock.Project)!, "obj", "project.assets.json"));
+        File.WriteAllText(
+            Path.Combine(Path.GetDirectoryName(unknownLock.Project)!, "packages.lock.json"),
+            "{\"version\":2,\"dependencies\":{\"net8.0\":{\"Mystery.Package\":{\"type\":\"Mystery\",\"resolved\":\"1.0.0\"}}}}",
+            Encoding.UTF8);
+        AssertAnalysisFailure(unknownLock.Project, unknownLock.Config!, "unknown lock type");
+
+        var lockControls = CreateCase("lock-type-controls", [], [], ["public"]);
+        WritePackageProject(lockControls.Project, ["Direct.Package"]);
+        File.Delete(Path.Combine(Path.GetDirectoryName(lockControls.Project)!, "obj", "project.assets.json"));
+        File.WriteAllText(
+            Path.Combine(Path.GetDirectoryName(lockControls.Project)!, "packages.lock.json"),
+            "{\"version\":2,\"dependencies\":{\"net8.0\":{\"Direct.Package\":{\"type\":\"Direct\",\"resolved\":\"1.0.0\"},\"Transitive.Package\":{\"type\":\"Transitive\",\"resolved\":\"1.0.0\"},\"Central.Package\":{\"type\":\"CentralTransitive\",\"resolved\":\"1.0.0\"},\"Child.Project\":{\"type\":\"Project\"}}}}",
+            Encoding.UTF8);
+        var lockControlResult = Run("check", lockControls.Project, "--config", lockControls.Config!);
+        AssertEqual(0, lockControlResult.ExitCode, "recognized lock entry types control");
+        AssertContains(lockControlResult.Output, "3 resolved packages");
+    }
+
+    private void RunStrictPolicySchemaCases()
+    {
+        var fixture = CreateCase("strict-policy-schema", ["Company.Internal"],
+            ["<packageSourceMapping><packageSource key=\"public\"><package pattern=\"Company.*\" /></packageSource></packageSourceMapping>"],
+            ["public"]);
+        var policies = new Dictionary<string, string>
+        {
+            ["unknown-root-member"] = "{\"version\":1,\"privatePackage\":[\"Company.*\"]}",
+            ["duplicate-root-member"] = "{\"version\":1,\"privatePackages\":[],\"privatePackages\":[\"Company.*\"]}",
+            ["unknown-source-member"] = "{\"version\":1,\"sourceTrust\":{\"public\":{\"trust\":\"public\",\"unexpected\":\"value\"}}}",
+            ["duplicate-trust-selector"] = "{\"version\":1,\"sourceTrust\":{\"public\":{\"trust\":\"public\",\"trust\":\"private\"}}}",
+            ["conflicting-trust-selectors"] = "{\"version\":1,\"sourceTrust\":{\"public\":{\"trust\":\"public\",\"label\":\"private\"}}}",
+            ["unknown-rule-member"] = "{\"version\":1,\"privatePackages\":[{\"pattern\":\"Company.*\",\"unexpected\":true}]}",
+            ["duplicate-rule-selector"] = "{\"version\":1,\"privatePackages\":[{\"pattern\":\"Company.*\",\"pattern\":\"Other.*\"}]}",
+            ["unknown-allowed-source-member"] = "{\"version\":1,\"privatePackages\":[{\"pattern\":\"Company.*\",\"allowedSources\":[\"public\"],\"unexpected\":true}]}",
+            ["duplicate-allowed-sources-member"] = "{\"version\":1,\"privatePackages\":[{\"pattern\":\"Company.*\",\"allowedSources\":[\"public\"],\"allowedSources\":[\"other\"]}]}",
+            ["unknown-exception-member"] = "{\"version\":1,\"exceptions\":[{\"code\":\"FF007\",\"sourceKey\":\"public\",\"reason\":\"test\",\"unexpected\":true}]}",
+            ["duplicate-exception-selector"] = "{\"version\":1,\"exceptions\":[{\"code\":\"FF007\",\"sourceKey\":\"public\",\"sourceKey\":\"other\",\"reason\":\"test\"}]}",
+        };
+
+        foreach (var policy in policies)
+        {
+            var path = Path.Combine(fixture.Root, policy.Key + ".json");
+            File.WriteAllText(path, policy.Value, Encoding.UTF8);
+            var result = Run("check", fixture.Project, "--config", fixture.Config!, "--policy", path);
+            AssertEqual(2, result.ExitCode, $"strict policy schema {policy.Key} exit code");
+            AssertEqual(string.Empty, result.StandardOutput, $"strict policy schema {policy.Key} stdout");
+        }
+
+        var valid = Path.Combine(fixture.Root, "valid-policy.json");
+        File.WriteAllText(valid, "{\"version\":1,\"sourceTrust\":{\"public\":\"public\"},\"privatePackages\":[\"Company.*\"]}", Encoding.UTF8);
+        AssertEqual(1, Run("check", fixture.Project, "--config", fixture.Config!, "--policy", valid).ExitCode, "valid policy control");
+    }
+
+    private void RunIdentityOutputCases()
+    {
+        var valid = CreateCase("identity-controls", ["Feed.Valid"], [], ["public"]);
+        string[] unsafeArguments = [
+            "https://user:password@example.invalid/index.json?token=topsecret",
+            "Company.Secret\r\nFF003: forged diagnostic",
+            "Company.Secret\tquoted",
+            "C:\\Users\\secret\\feed.config",
+            "Company.Secret\u2028separator",
+            "Company.Secret\u202Fformat",
+            "\"quoted identity\""
+        ];
+        foreach (var unsafeArgument in unsafeArguments)
+        {
+            var invalidOption = Run("check", valid.Project, "--unknown=" + unsafeArgument);
+            AssertEqual(2, invalidOption.ExitCode, "invalid CLI option exit code");
+            AssertNotContains(invalidOption.Output, unsafeArgument);
+        }
+
+        var rawArgument = unsafeArguments[0];
+        var invalidOptionOutput = Run("check", valid.Project, "--unknown=" + rawArgument).Output;
+        AssertNotContains(invalidOptionOutput, "password");
+        AssertNotContains(invalidOptionOutput, "topsecret");
+
+        var invalidIdentity = CreateCase("credential-shaped-package-id", [],
+            ["<packageSourceMapping><packageSource key=\"public\"><package pattern=\"Other.*\" /></packageSource></packageSourceMapping>"],
+            ["public"]);
+        WritePackageProject(invalidIdentity.Project, [rawArgument]);
+        var identity = rawArgument + "/1.0.0";
+        var identityAssets = new Dictionary<string, object>
+        {
+            ["version"] = 3,
+            ["targets"] = new Dictionary<string, object> { ["net8.0"] = new Dictionary<string, object> { [identity] = new { type = "package" } } },
+            ["libraries"] = new Dictionary<string, object> { [identity] = new { type = "package" } },
+            ["projectFileDependencyGroups"] = new Dictionary<string, object> { ["net8.0"] = new[] { rawArgument + " >= 1.0.0" } },
+            ["project"] = new Dictionary<string, object> { ["frameworks"] = new Dictionary<string, object> { ["net8.0"] = new Dictionary<string, object> { ["dependencies"] = new Dictionary<string, object> { [rawArgument] = new { target = "Package", version = "[1.0.0, )" } } } } }
+        };
+        File.WriteAllText(Path.Combine(Path.GetDirectoryName(invalidIdentity.Project)!, "obj", "project.assets.json"), JsonSerializer.Serialize(identityAssets), Encoding.UTF8);
+        var invalidIdentityResult = Run("check", invalidIdentity.Project, "--config", invalidIdentity.Config!);
+        AssertEqual(2, invalidIdentityResult.ExitCode, "credential-shaped package identity exit code");
+        AssertNotContains(invalidIdentityResult.Output, rawArgument);
+        AssertNotContains(invalidIdentityResult.Output, "password");
+        AssertNotContains(invalidIdentityResult.Output, "topsecret");
+    }
+
+    private void RunReportContractCases()
+    {
+        var empty = CreateCase("report-empty", [], [], ["public"]);
+        var emptyJson = Run("check", empty.Project, "--config", empty.Config!, "--format", "json");
+        AssertEqual(0, emptyJson.ExitCode, "empty JSON report exit code");
+        AssertJsonReportContract(emptyJson.StandardOutput, null);
+
+        var violation = CreateCase("report-violation", ["Feed.ReportViolation"],
+            ["<packageSourceMapping><packageSource key=\"public\"><package pattern=\"Other.*\" /></packageSource></packageSourceMapping>"],
+            ["public"]);
+        var violationJson = Run("check", violation.Project, "--config", violation.Config!, "--format", "json");
+        AssertEqual(1, violationJson.ExitCode, "violation JSON report exit code");
+        AssertJsonReportContract(violationJson.StandardOutput, "FF003");
+
+        var mismatch = CreateCase("report-mismatch", ["Feed.ReportMismatch"],
+            ["<packageSourceMapping><packageSource key=\"missing\"><package pattern=\"Feed.ReportMismatch\" /></packageSource></packageSourceMapping>"],
+            ["public"]);
+        var mismatchJson = Run("check", mismatch.Project, "--config", mismatch.Config!, "--format", "json");
+        AssertEqual(1, mismatchJson.ExitCode, "mismatch JSON report exit code");
+        AssertJsonReportContract(mismatchJson.StandardOutput, "FF004");
+
+        var informational = CreateCase("report-informational", ["Feed.ReportInfo"],
+            ["<packageSourceMapping><packageSource key=\"public\"><package pattern=\"*\" /></packageSource></packageSourceMapping>"],
+            ["public"]);
+        var informationalJson = Run("check", informational.Project, "--config", informational.Config!, "--format", "json");
+        AssertEqual(0, informationalJson.ExitCode, "informational JSON report exit code");
+        AssertJsonReportContract(informationalJson.StandardOutput, "FF008");
+    }
+
+    private void RunSolutionIdentityCases()
+    {
+        var slnx = CreateSlnxCase();
+        var slnxResult = Run("check", slnx.Solution!, "--config", slnx.Config!);
+        AssertEqual(0, slnxResult.ExitCode, "slnx solution extension exit code");
+
+        var caseOnly = CreateCaseOnlySolution();
+        if (OperatingSystem.IsWindows())
+        {
+            Console.WriteLine("Case-sensitive solution member fixture: deferred to non-Windows CI.");
+        }
+        else
+        {
+            var caseOnlyResult = Run("check", caseOnly.Solution!, "--config", caseOnly.Config!);
+            AssertEqual(1, caseOnlyResult.ExitCode, "case-sensitive solution member exit code");
+            AssertContains(caseOnlyResult.Output, "FF001");
+        }
+    }
+
+    private void AssertAnalysisFailure(string project, string config, string label)
+    {
+        var result = Run("check", project, "--config", config);
+        AssertEqual(2, result.ExitCode, label + " exit code");
+        AssertEqual(string.Empty, result.StandardOutput, label + " stdout");
+    }
+
+    private static void AssertJsonReportContract(string json, string? expectedDiagnosticCode)
+    {
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        foreach (var property in new[] { "schemaVersion", "format", "tool", "exitCode", "summary", "sources", "diagnostics" })
+        {
+            if (!root.TryGetProperty(property, out _)) throw new InvalidOperationException($"JSON report is missing '{property}'.");
+        }
+
+        var summary = root.GetProperty("summary");
+        foreach (var property in new[] { "resolvedPackageCount", "activeSourceCount", "packageSourceMappingEnabled", "deterministicMappingCount", "diagnosticCount" })
+        {
+            if (!summary.TryGetProperty(property, out _)) throw new InvalidOperationException($"JSON summary is missing '{property}'.");
+        }
+
+        foreach (var diagnostic in root.GetProperty("diagnostics").EnumerateArray())
+        {
+            foreach (var property in new[] { "code", "severity", "message" })
+            {
+                if (!diagnostic.TryGetProperty(property, out _)) throw new InvalidOperationException($"JSON diagnostic is missing '{property}'.");
+            }
+
+            if (diagnostic.TryGetProperty("id", out _) || diagnostic.TryGetProperty("title", out _))
+            {
+                throw new InvalidOperationException("JSON diagnostic contains forbidden legacy fields.");
+            }
+
+            if (expectedDiagnosticCode is not null && diagnostic.GetProperty("code").GetString() == expectedDiagnosticCode)
+            {
+                var expectedSeverity = expectedDiagnosticCode == "FF008" ? "information" : "violation";
+                AssertEqual(expectedSeverity, diagnostic.GetProperty("severity").GetString(), $"JSON {expectedDiagnosticCode} severity");
+            }
+        }
+
+        var diagnostics = root.GetProperty("diagnostics").EnumerateArray().ToArray();
+        AssertEqual(diagnostics.Length, summary.GetProperty("diagnosticCount").GetInt32(), "JSON diagnostic count");
+        if (expectedDiagnosticCode is null && diagnostics.Length != 0)
+        {
+            throw new InvalidOperationException("Empty JSON report contains unexpected diagnostics.");
+        }
+
+        if (expectedDiagnosticCode is not null && !diagnostics.Any(item => item.GetProperty("code").GetString() == expectedDiagnosticCode))
+        {
+            throw new InvalidOperationException($"JSON report is missing diagnostic '{expectedDiagnosticCode}'.");
+        }
     }
 
     private TestCase CreateNestedProjectConfigCase()
@@ -703,6 +937,45 @@ internal sealed class Fixture : IDisposable
             Encoding.UTF8);
     }
 
+    private static void WritePackageProject(string project, IReadOnlyList<string> packages)
+    {
+        var references = string.Join(
+            string.Empty,
+            packages.Select(package => $"<PackageReference Include=\"{SecurityElement.Escape(package)}\" Version=\"1.0.0\" />"));
+        File.WriteAllText(
+            project,
+            $"<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup>{references}</ItemGroup></Project>",
+            Encoding.UTF8);
+    }
+
+    private TestCase CreateSlnxCase()
+    {
+        var root = Path.Combine(_root, "slnx-case");
+        Directory.CreateDirectory(Path.Combine(root, ".git"));
+        var project = Path.Combine(root, "Project.csproj");
+        WriteProjectAndAssets(project, []);
+        var solution = Path.Combine(root, "Solution.slnx");
+        File.WriteAllText(solution, "<?xml version=\"1.0\" encoding=\"utf-8\"?><Solution><Project Path=\"Project.csproj\" /></Solution>", Encoding.UTF8);
+        var config = Path.Combine(root, "NuGet.config");
+        WriteConfig(config, ["public"]);
+        return new(root, project, solution, config);
+    }
+
+    private TestCase CreateCaseOnlySolution()
+    {
+        var root = Path.Combine(_root, "case-only-solution");
+        Directory.CreateDirectory(Path.Combine(root, ".git"));
+        var emptyProject = Path.Combine(root, "member", "Project.csproj");
+        var violatingProject = Path.Combine(root, "MEMBER", "Project.csproj");
+        WriteProjectAndAssets(emptyProject, []);
+        WriteProjectAndAssets(violatingProject, ["Feed.CaseOnly"]);
+        var solution = Path.Combine(root, "CaseOnly.sln");
+        WriteSolution(solution, [("Empty", "member/Project.csproj", "csproj"), ("Violating", "MEMBER/Project.csproj", "csproj")]);
+        var config = Path.Combine(root, "NuGet.config");
+        WriteConfig(config, ["one", "two"]);
+        return new(root, emptyProject, solution, config);
+    }
+
     private static void WriteConfig(string path, IReadOnlyList<string> sourceKeys, string mapping = "")
     {
         var root = Path.GetDirectoryName(path)!;
@@ -799,9 +1072,13 @@ internal sealed class Fixture : IDisposable
 
     private static void WriteDependencyTargetAssets(string projectPath, string dependencyTarget, string targetType, string libraryType)
     {
+        var declaresPackage = dependencyTarget.Split(',', StringSplitOptions.TrimEntries)
+            .Any(value => value is "Package" or "PackageProjectExternal" or "All");
         File.WriteAllText(
             projectPath,
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include=\"Company.Secret\" Version=\"1.0.0\" /></ItemGroup></Project>",
+            declaresPackage
+                ? "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include=\"Company.Secret\" Version=\"1.0.0\" /></ItemGroup></Project>"
+                : "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>",
             Encoding.UTF8);
         File.WriteAllText(
             Path.Combine(Path.GetDirectoryName(projectPath)!, "obj", "project.assets.json"),

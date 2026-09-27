@@ -21,7 +21,7 @@ updates, and focused pull requests are welcome.
 Restore from the repository-controlled source list before building:
 
 ```powershell
-dotnet restore KeelMatrix.FeedFence.sln --configfile NuGet.config --no-cache --force
+dotnet restore KeelMatrix.FeedFence.sln --configfile NuGet.config --no-cache --locked-mode
 ```
 
 ## Validation
@@ -35,6 +35,8 @@ dotnet run --project tests/FeedFenceCliTests/KeelMatrix.FeedFence.CliTests.cspro
 dotnet run --project tests/Phase0Probe/KeelMatrix.FeedFence.Phase0Probe.csproj -c Release --no-build
 pwsh ./scripts/Invoke-PlatformFixtures.ps1 -Configuration Release
 pwsh ./scripts/Invoke-PackGate.ps1 -Configuration Release
+pwsh ./scripts/Invoke-LockContract.ps1
+pwsh ./scripts/Invoke-ReproducibilityGate.ps1 -Configuration Release
 pwsh ./scripts/Invoke-DependencyAudit.ps1
 pwsh ./scripts/Invoke-RepoHygiene.ps1
 pwsh ./scripts/Invoke-RepoHygiene.ps1 -SelfTest

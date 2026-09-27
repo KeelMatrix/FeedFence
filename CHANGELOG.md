@@ -16,3 +16,13 @@
   target/library record types, alongside
   solution-folder-aware target discovery and repository-relative sensitive
   package-input checks.
+
+### Changed
+
+- Schema-v1 policy parsing now rejects unknown and duplicate members, restore
+  validation rejects incomplete or type-laundered graphs, and machine reports
+  use one documented JSON shape with redacted untrusted identities.
+- CI and release restores use committed lock graphs and immutable action pins;
+  verified releases publish both the tool and symbols packages, with a
+  normalized two-root reproducibility gate for compiled bytes and package
+  entry contents.

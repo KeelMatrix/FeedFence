@@ -42,8 +42,9 @@ internal static class RestoreGraphReader
                 throw new AnalysisException("restore artifacts are missing; run restore first, then run FeedFence again.");
             }
 
-            var assetsPackages = hasAssets ? ReadAssets(assetsPath) : null;
-            var lockPackages = hasLock ? ReadLockFile(lockPath) : null;
+            var declaredPackageIds = ProjectPackageReferenceReader.Read(projectPath);
+            var assetsPackages = hasAssets ? ReadAssets(assetsPath, declaredPackageIds) : null;
+            var lockPackages = hasLock ? ReadLockFile(lockPath, declaredPackageIds) : null;
             if (assetsPackages is not null && lockPackages is not null &&
                 !assetsPackages.SetEquals(lockPackages))
             {
@@ -62,11 +63,15 @@ internal static class RestoreGraphReader
         return packages.Values.Order(StringComparer.OrdinalIgnoreCase).ThenBy(value => value, StringComparer.Ordinal).ToArray();
     }
 
-    private static HashSet<string> ReadAssets(string path)
+    private static HashSet<string> ReadAssets(string path, IReadOnlySet<string> declaredPackageIds)
     {
         using var document = ParseJson(path, MaxBytes: 32 * 1024 * 1024, "project.assets.json");
         var root = document.RootElement;
-        if (!root.TryGetProperty("targets", out var targets) || targets.ValueKind != JsonValueKind.Object ||
+        if (!root.TryGetProperty("version", out var version) ||
+            version.ValueKind != JsonValueKind.Number ||
+            !version.TryGetInt32(out var schemaVersion) ||
+            schemaVersion is not (3 or 4) ||
+            !root.TryGetProperty("targets", out var targets) || targets.ValueKind != JsonValueKind.Object ||
             !root.TryGetProperty("libraries", out var libraries) || libraries.ValueKind != JsonValueKind.Object ||
             !root.TryGetProperty("projectFileDependencyGroups", out var dependencyGroups) || dependencyGroups.ValueKind != JsonValueKind.Object ||
             !root.TryGetProperty("project", out var project) || project.ValueKind != JsonValueKind.Object ||
@@ -79,11 +84,18 @@ internal static class RestoreGraphReader
         EnsureCount(dependencyGroups, InputLimits.MaxAssetFrameworkCount, "project.assets.json contains too many dependency groups.");
         EnsureCount(projectFrameworks, InputLimits.MaxAssetFrameworkCount, "project.assets.json contains too many project frameworks.");
         EnsureCount(libraries, InputLimits.MaxAssetLibraryCount, "project.assets.json contains too many libraries.");
+        if (declaredPackageIds.Count > 0)
+        {
+            EnsureNonEmpty(targets, "project.assets.json contains no target frameworks.");
+            EnsureNonEmpty(dependencyGroups, "project.assets.json contains no dependency groups.");
+            EnsureNonEmpty(projectFrameworks, "project.assets.json contains no project frameworks.");
+        }
 
         var libraryTypes = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var library in libraries.EnumerateObject())
         {
-            if (!libraryTypes.TryAdd(library.Name, GetLibraryType("library record", library.Name, library.Value)))
+            var packageName = GetLibraryName(library.Name);
+            if (!libraryTypes.TryAdd(library.Name, GetLibraryType("library record", packageName, library.Value)))
             {
                 throw new AnalysisException("project.assets.json contains duplicate library identities.");
             }
@@ -112,24 +124,24 @@ internal static class RestoreGraphReader
 
                 if (targetLibrary.Value.ValueKind != JsonValueKind.Object)
                 {
-                    throw new AnalysisException($"project.assets.json target library '{targetLibrary.Name}' is malformed.");
+                    throw new AnalysisException("project.assets.json contains a malformed target library record.");
                 }
 
                 var libraryName = GetLibraryName(targetLibrary.Name);
                 if (!libraryTypes.TryGetValue(targetLibrary.Name, out var libraryType))
                 {
-                    throw new AnalysisException($"project.assets.json is incomplete; target library '{targetLibrary.Name}' has no library record.");
+                    throw new AnalysisException($"project.assets.json is incomplete; target library '{libraryName}' has no library record.");
                 }
 
-                var targetType = GetLibraryType("target library", targetLibrary.Name, targetLibrary.Value);
+                var targetType = GetLibraryType("target library", libraryName, targetLibrary.Value);
                 if (!string.Equals(targetType, libraryType, StringComparison.OrdinalIgnoreCase))
                 {
-                    throw new AnalysisException($"project.assets.json is inconsistent; target and library types disagree for '{targetLibrary.Name}'.");
+                    throw new AnalysisException($"project.assets.json is inconsistent; target and library types disagree for '{libraryName}'.");
                 }
 
                 if (!frameworkDependencyNames.TryAdd(libraryName, new TargetLibrary(targetType)))
                 {
-                    throw new AnalysisException($"project.assets.json is inconsistent; target framework '{target.Name}' contains multiple identities for '{libraryName}'.");
+                    throw new AnalysisException("project.assets.json is inconsistent; a target framework contains multiple identities for one library.");
                 }
 
                 targetLibraryNames.Add(targetLibrary.Name);
@@ -164,6 +176,11 @@ internal static class RestoreGraphReader
             {
                 throw new AnalysisException("project.assets.json contains too many resolved packages.");
             }
+        }
+
+        if (declaredPackageIds.Any(packageId => !result.Contains(packageId)))
+        {
+            throw new AnalysisException("project.assets.json is incomplete; a package declared by the project is not represented in the resolved package graph.");
         }
 
         return result;
@@ -250,6 +267,7 @@ internal static class RestoreGraphReader
 
             foreach (var dependency in dependencies.EnumerateObject())
             {
+                var dependencyName = InputIdentity.RequirePackageId(dependency.Name, "project.assets.json contains an invalid project dependency identity.");
                 if (++declaredDependencyCount > InputLimits.MaxAssetTargetLibraryCount ||
                     dependency.Value.ValueKind != JsonValueKind.Object ||
                     !dependency.Value.TryGetProperty("target", out var targetKind) ||
@@ -264,20 +282,20 @@ internal static class RestoreGraphReader
 
                 foreach (var matchingTarget in matchingTargets)
                 {
-                    if (!matchingTarget.TryGetValue(dependency.Name, out var targetLibrary))
+                    if (!matchingTarget.TryGetValue(dependencyName, out var targetLibrary))
                     {
                         var dependencyKind = isPackageDependency ? "package dependency" : "dependency";
-                        throw new AnalysisException($"project.assets.json is incomplete; declared {dependencyKind} '{dependency.Name}' is not represented in its target framework.");
+                        throw new AnalysisException($"project.assets.json is incomplete; declared {dependencyKind} '{dependencyName}' is not represented in its target framework.");
                     }
 
                     if (isPackageDependency && !string.Equals(targetLibrary.Type, "package", StringComparison.OrdinalIgnoreCase))
                     {
-                        throw new AnalysisException($"project.assets.json is inconsistent; declared package dependency '{dependency.Name}' resolves to non-package target and library records.");
+                        throw new AnalysisException($"project.assets.json is inconsistent; declared package dependency '{dependencyName}' resolves to non-package target and library records.");
                     }
 
                     if (!isPackageDependency && !TargetAllowsLibraryType(dependencyTarget, targetLibrary.Type))
                     {
-                        throw new AnalysisException($"project.assets.json is inconsistent; declared dependency '{dependency.Name}' has a target that does not allow '{targetLibrary.Type}' target and library records.");
+                        throw new AnalysisException($"project.assets.json is inconsistent; declared dependency '{dependencyName}' has a target that does not allow '{targetLibrary.Type}' target and library records.");
                     }
                 }
             }
@@ -328,13 +346,7 @@ internal static class RestoreGraphReader
             .Where(index => index >= 0)
             .DefaultIfEmpty(declaration.Length)
             .Min();
-        var name = declaration[..end].Trim();
-        if (name.Length == 0)
-        {
-            throw new AnalysisException("project.assets.json contains an invalid declared dependency.");
-        }
-
-        return name;
+        return InputIdentity.RequirePackageId(declaration[..end].Trim(), "project.assets.json contains an invalid declared dependency identity.");
     }
 
     private static string GetLibraryName(string identity)
@@ -345,7 +357,7 @@ internal static class RestoreGraphReader
             throw new AnalysisException("project.assets.json contains an invalid library identity.");
         }
 
-        return identity[..separator];
+        return InputIdentity.RequirePackageId(identity[..separator], "project.assets.json contains an invalid library identity.");
     }
 
     private static string GetLibraryType(string recordKind, string identity, JsonElement library)
@@ -378,17 +390,22 @@ internal static class RestoreGraphReader
         PackageProjectExternal = Package | Project | ExternalProject
     }
 
-    private static HashSet<string> ReadLockFile(string path)
+    private static HashSet<string> ReadLockFile(string path, IReadOnlySet<string> declaredPackageIds)
     {
         using var document = ParseJson(path, MaxBytes: 8 * 1024 * 1024, "packages.lock.json");
         var root = document.RootElement;
-        if (!root.TryGetProperty("dependencies", out var dependencies) || dependencies.ValueKind != JsonValueKind.Object)
+        if (!root.TryGetProperty("version", out var version) ||
+            version.ValueKind != JsonValueKind.Number ||
+            !version.TryGetInt32(out var schemaVersion) ||
+            schemaVersion != 2 ||
+            !root.TryGetProperty("dependencies", out var dependencies) || dependencies.ValueKind != JsonValueKind.Object)
         {
             throw new AnalysisException("packages.lock.json is incomplete; run restore first, then run FeedFence again.");
         }
 
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         EnsureCount(dependencies, InputLimits.MaxLockFrameworkCount, "packages.lock.json contains too many target frameworks.");
+        EnsureNonEmpty(dependencies, "packages.lock.json contains no target frameworks.");
         foreach (var framework in dependencies.EnumerateObject())
         {
             if (framework.Value.ValueKind != JsonValueKind.Object)
@@ -398,31 +415,56 @@ internal static class RestoreGraphReader
 
             foreach (var package in framework.Value.EnumerateObject())
             {
+                var packageId = InputIdentity.RequirePackageId(package.Name, "packages.lock.json contains an invalid package identity.");
                 if (result.Count >= InputLimits.MaxResolvedPackageCount)
                 {
                     throw new AnalysisException("packages.lock.json contains too many resolved packages.");
                 }
 
-                if (package.Value.ValueKind == JsonValueKind.Object &&
-                    package.Value.TryGetProperty("type", out var packageType) &&
-                    string.Equals(packageType.GetString(), "Project", StringComparison.OrdinalIgnoreCase))
+                if (package.Value.ValueKind != JsonValueKind.Object ||
+                    !package.Value.TryGetProperty("type", out var packageType) ||
+                    packageType.ValueKind != JsonValueKind.String ||
+                    packageType.GetString() is not { } packageTypeValue ||
+                    packageTypeValue is not ("Direct" or "Transitive" or "Project" or "CentralTransitive"))
                 {
+                    throw new AnalysisException("packages.lock.json contains an unknown or invalid package entry type.");
+                }
+
+                if (string.Equals(packageTypeValue, "Project", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (declaredPackageIds.Contains(packageId))
+                    {
+                        throw new AnalysisException("packages.lock.json marks a project dependency as a package declared by the project.");
+                    }
+
                     continue;
                 }
 
-                if (package.Value.ValueKind != JsonValueKind.Object ||
-                    !package.Value.TryGetProperty("resolved", out var resolved) ||
+                if (!package.Value.TryGetProperty("resolved", out var resolved) ||
                     resolved.ValueKind != JsonValueKind.String ||
                     string.IsNullOrWhiteSpace(resolved.GetString()))
                 {
                     throw new AnalysisException("packages.lock.json contains an unresolved package; run restore first, then run FeedFence again.");
                 }
 
-                result.Add(package.Name);
+                result.Add(packageId);
             }
         }
 
+        if (declaredPackageIds.Any(packageId => !result.Contains(packageId)))
+        {
+            throw new AnalysisException("packages.lock.json is incomplete; a package declared by the project is not represented in the resolved package graph.");
+        }
+
         return result;
+    }
+
+    private static void EnsureNonEmpty(JsonElement element, string message)
+    {
+        if (!element.EnumerateObject().Any())
+        {
+            throw new AnalysisException(message);
+        }
     }
 
     private static void EnsureCount(JsonElement element, int maximum, string message)

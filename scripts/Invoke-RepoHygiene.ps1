@@ -57,6 +57,23 @@ function Invoke-HygieneCheck {
         }
     }
 
+    $workflowPaths = @(git -C $Root ls-files -- '.github/workflows/*.yml' '.github/workflows/*.yaml')
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Unable to enumerate workflow files.'
+    }
+
+    foreach ($relativePath in $workflowPaths) {
+        $path = Join-Path $Root $relativePath
+        foreach ($line in Get-Content -LiteralPath $path) {
+            if ($line -match '^\s*(?:-\s*)?uses:\s*(?<reference>[^\s#]+)') {
+                $reference = $Matches.reference
+                if ($reference -notmatch '@[0-9a-fA-F]{40}$') {
+                    $findings.Add("workflow '$relativePath' contains a mutable GitHub Actions reference")
+                }
+            }
+        }
+    }
+
     if ($findings.Count -gt 0) {
         $findings | ForEach-Object { Write-Error $_ }
         throw "Repository hygiene failed with $($findings.Count) finding(s)."
@@ -132,6 +149,17 @@ if ($SelfTest) {
         Invoke-GitChecked $trailerRoot @('commit', '--quiet', '-m', $trailerMessage)
         Assert-HygieneRejects $trailerRoot 'contains prohibited authorship'
         Write-Output 'Repository hygiene self-test: prohibited-trailer commit rejected.'
+
+        $mutableWorkflowRoot = Join-Path $selfTestRoot 'mutable-workflow'
+        New-SyntheticRepository $mutableWorkflowRoot
+        $workflowDirectory = Join-Path $mutableWorkflowRoot '.github\workflows'
+        New-Item -ItemType Directory -Force -Path $workflowDirectory | Out-Null
+        Set-Content -LiteralPath (Join-Path $workflowDirectory 'ci.yml') -Encoding utf8 -Value "name: CI`nsteps:`n  - uses: actions/checkout@v4"
+        Invoke-GitChecked $mutableWorkflowRoot @('add', '.github/workflows/ci.yml')
+        Invoke-GitChecked $mutableWorkflowRoot @('commit', '--quiet', '-m', 'synthetic mutable workflow')
+        Assert-HygieneRejects $mutableWorkflowRoot 'mutable GitHub Actions reference'
+        Write-Output 'Repository hygiene self-test: mutable workflow reference rejected.'
+
         Write-Output 'PASS: repository hygiene self-test completed.'
     }
     finally {

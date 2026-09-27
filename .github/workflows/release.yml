@@ -24,12 +24,12 @@ jobs:
 
     steps:
       - name: Check out tagged commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
 
       - name: Set up .NET SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 8.0.425
 
@@ -57,7 +57,11 @@ jobs:
           pwsh ./scripts/Invoke-ReleaseContract.ps1 -Tag $tag
 
       - name: Restore from repository NuGet.config
-        run: dotnet restore KeelMatrix.FeedFence.sln --configfile NuGet.config --no-cache --force
+        run: dotnet restore KeelMatrix.FeedFence.sln --configfile NuGet.config --no-cache --locked-mode
+
+      - name: Verify committed lock contract
+        shell: pwsh
+        run: pwsh ./scripts/Invoke-LockContract.ps1
 
       - name: Build Release
         run: dotnet build KeelMatrix.FeedFence.sln -c Release --no-restore
@@ -90,8 +94,12 @@ jobs:
           pwsh ./scripts/Invoke-PackGate.ps1 -Configuration Release -PackageVersion ${{ steps.release-version.outputs.version }} -ArtifactDirectory artifacts/packages
           pwsh ./scripts/Invoke-ReleaseContract.ps1 -Tag "${{ github.ref_name }}" -ArtifactDirectory artifacts/packages
 
+      - name: Run reproducibility gate
+        shell: pwsh
+        run: pwsh ./scripts/Invoke-ReproducibilityGate.ps1 -Configuration Release -PackageVersion ${{ steps.release-version.outputs.version }}
+
       - name: Upload verified artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: feedfence-${{ steps.release-version.outputs.version }}
           if-no-files-found: error
@@ -111,14 +119,14 @@ jobs:
 
     steps:
       - name: Download verified artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: feedfence-${{ needs.verify.outputs.version }}
           path: artifacts/packages
 
       - name: Authenticate to NuGet.org with Trusted Publishing
         id: nuget-login
-        uses: NuGet/login@v1
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1
         with:
           user: dmitriyzen
 
@@ -127,5 +135,13 @@ jobs:
         run: >-
           dotnet nuget push
           artifacts/packages/KeelMatrix.FeedFence.${{ needs.verify.outputs.version }}.nupkg
+          --source https://api.nuget.org/v3/index.json
+          --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"
+
+      - name: Push symbols package to NuGet.org
+        shell: pwsh
+        run: >-
+          dotnet nuget push
+          artifacts/packages/KeelMatrix.FeedFence.${{ needs.verify.outputs.version }}.snupkg
           --source https://api.nuget.org/v3/index.json
           --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"

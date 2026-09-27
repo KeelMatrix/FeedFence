@@ -79,8 +79,11 @@ internal sealed class FeedFencePolicy
             throw new AnalysisException("the FeedFence policy root must be a JSON object.");
         }
 
-        if (root.TryGetProperty("version", out var version) &&
-            (version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var versionNumber) || versionNumber != 1))
+        ValidateMembers(root, "version", "sourceTrust", "sources", "protectedPackages", "privatePackages", "exceptions");
+        if (!root.TryGetProperty("version", out var version) ||
+            version.ValueKind != JsonValueKind.Number ||
+            !version.TryGetInt32(out var versionNumber) ||
+            versionNumber != 1)
         {
             throw new AnalysisException("the FeedFence policy schema version is unsupported.");
         }
@@ -116,19 +119,38 @@ internal sealed class FeedFencePolicy
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var source in sources.EnumerateObject())
         {
-            var label = source.Value.ValueKind == JsonValueKind.String
-                ? source.Value.GetString()
-                : source.Value.ValueKind == JsonValueKind.Object && source.Value.TryGetProperty("trust", out var trust)
-                    ? trust.GetString()
-                    : source.Value.ValueKind == JsonValueKind.Object && source.Value.TryGetProperty("label", out var labelProperty)
-                        ? labelProperty.GetString()
-                        : null;
+            string? label;
+            if (source.Value.ValueKind == JsonValueKind.String)
+            {
+                label = source.Value.GetString();
+            }
+            else if (source.Value.ValueKind == JsonValueKind.Object)
+            {
+                ValidateMembers(source.Value, "trust", "label");
+                var hasTrust = source.Value.TryGetProperty("trust", out var trust);
+                var hasLabel = source.Value.TryGetProperty("label", out var labelProperty);
+                if (hasTrust && hasLabel)
+                {
+                    throw new AnalysisException("a FeedFence source trust entry contains conflicting trust and label selectors.");
+                }
+
+                var value = hasTrust ? trust : hasLabel ? labelProperty : default;
+                label = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+            }
+            else
+            {
+                label = null;
+            }
+
             if (string.IsNullOrWhiteSpace(label))
             {
                 throw new AnalysisException("every FeedFence source trust label must be a non-empty string.");
             }
 
-            result[source.Name] = label.Trim().ToLowerInvariant();
+            if (!result.TryAdd(source.Name, label.Trim().ToLowerInvariant()))
+            {
+                throw new AnalysisException("the FeedFence policy contains a duplicate source trust selector.");
+            }
         }
 
         return result;
@@ -157,6 +179,7 @@ internal sealed class FeedFencePolicy
             }
             else if (element.ValueKind == JsonValueKind.Object)
             {
+                ValidateMembers(element, "pattern", "packagePattern", "allowedSources");
                 pattern = ReadSelector(element, "pattern", "packagePattern", "package pattern");
                 allowedSources = ReadStringArray(element, "allowedSources").Cast<string>().ToArray();
             }
@@ -195,6 +218,7 @@ internal sealed class FeedFencePolicy
                 throw new AnalysisException("every FeedFence policy exception must be an object.");
             }
 
+            ValidateMembers(element, "code", "reason", "packagePattern", "pattern", "sourceKey", "source");
             var code = ReadString(element, "code");
             var reason = ReadString(element, "reason");
             var packagePattern = ReadSelector(element, "packagePattern", "pattern", "package pattern");
@@ -219,6 +243,19 @@ internal sealed class FeedFencePolicy
         }
 
         return result;
+    }
+
+    private static void ValidateMembers(JsonElement objectElement, params string[] allowedNames)
+    {
+        var allowed = allowedNames.ToHashSet(StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var property in objectElement.EnumerateObject())
+        {
+            if (!allowed.Contains(property.Name) || !seen.Add(property.Name))
+            {
+                throw new AnalysisException("the FeedFence policy contains an unknown or duplicate member.");
+            }
+        }
     }
 
     private static string? ReadString(JsonElement objectElement, string propertyName)
@@ -268,6 +305,11 @@ internal sealed class FeedFencePolicy
         if (result.Any(string.IsNullOrWhiteSpace))
         {
             throw new AnalysisException($"FeedFence policy property '{propertyName}' must contain only non-empty strings.");
+        }
+
+        if (result.Cast<string>().Distinct(StringComparer.OrdinalIgnoreCase).Count() != result.Length)
+        {
+            throw new AnalysisException($"FeedFence policy property '{propertyName}' must not contain duplicate selectors.");
         }
 
         return result.Cast<string>().ToArray();

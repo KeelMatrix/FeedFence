@@ -36,6 +36,7 @@ internal static class JsonReport
             writer.WriteNumber("activeSourceCount", result.ActiveSourceCount);
             writer.WriteBoolean("packageSourceMappingEnabled", result.MappingEnabled);
             writer.WriteNumber("deterministicMappingCount", result.DeterministicMappingCount);
+            writer.WriteNumber("diagnosticCount", result.Diagnostics.Count);
             writer.WriteEndObject();
             WriteSources(writer, result);
             WriteDiagnostics(writer, result);
