@@ -157,6 +157,15 @@ if ($SelfTest) {
         Assert-HygieneRejects $wrongAuthorRoot 'unexpected author identity'
         Write-Output 'Repository hygiene self-test: wrong-author commit rejected.'
 
+        $wrongCommitterRoot = Join-Path $selfTestRoot 'wrong-committer'
+        New-SyntheticRepository $wrongCommitterRoot
+        Set-Content -LiteralPath (Join-Path $wrongCommitterRoot 'committer.txt') -Encoding utf8 -Value 'wrong committer'
+        Invoke-GitChecked $wrongCommitterRoot @('add', 'committer.txt')
+        & git -C $wrongCommitterRoot -c user.name='Not KeelMatrix Committer' -c user.email='not-committer@example.invalid' commit --quiet --author='KeelMatrix <keelmatrix@users.noreply.github.com>' -m 'synthetic wrong committer' *> $null
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to create the wrong-committer synthetic commit.' }
+        Assert-HygieneRejects $wrongCommitterRoot 'unexpected committer identity'
+        Write-Output 'Repository hygiene self-test: wrong-committer commit rejected.'
+
         $webFlowRoot = Join-Path $selfTestRoot 'github-web-flow'
         New-SyntheticRepository $webFlowRoot
         Set-Content -LiteralPath (Join-Path $webFlowRoot 'web-flow.txt') -Encoding utf8 -Value 'GitHub web flow'
@@ -174,6 +183,14 @@ if ($SelfTest) {
         Invoke-GitChecked $trailerRoot @('commit', '--quiet', '-m', $trailerMessage)
         Assert-HygieneRejects $trailerRoot 'contains prohibited authorship'
         Write-Output 'Repository hygiene self-test: prohibited-trailer commit rejected.'
+
+        $internalWordingRoot = Join-Path $selfTestRoot 'internal-wording'
+        New-SyntheticRepository $internalWordingRoot
+        Set-Content -LiteralPath (Join-Path $internalWordingRoot 'wording.txt') -Encoding utf8 -Value 'internal wording'
+        Invoke-GitChecked $internalWordingRoot @('add', 'wording.txt')
+        Invoke-GitChecked $internalWordingRoot @('commit', '--quiet', '-m', 'synthetic internal process wording')
+        Assert-HygieneRejects $internalWordingRoot 'contains prohibited authorship'
+        Write-Output 'Repository hygiene self-test: internal wording commit rejected.'
 
         $mutableWorkflowRoot = Join-Path $selfTestRoot 'mutable-workflow'
         New-SyntheticRepository $mutableWorkflowRoot
