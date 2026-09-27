@@ -17,7 +17,7 @@ $allowedCommitterIdentities = @(
 function Invoke-HygieneCheck {
     param([string]$Root)
 
-    $forbiddenPattern = '(?im)(?:Co-Authored-By\s*:|\b(?:Paperclip|Codex|agent(?:s)?|orchestrat(?:e|ed|ion|or)|Task\s+Delegator|staff[- ]owned|founder[- ](?:approval|approved|gated|controlled)|frontier[- ](?:review|approval)|internal\s+process)\b)'
+    $forbiddenPattern = '(?im)(?:Co-Authored-By\s*:|\b(?:PAPERCLIP(?:_[A-Z0-9_]+)*|CODEX(?:_[A-Z0-9_]+)*|KEE-\d+|Paperclip|Codex|agent(?:s)?|orchestrat(?:e|ed|ion|or)|Task\s+Delegator|model\s+rout(?:e|ing)|private\s+(?:operating\s+policy|process)|internal\s+(?:automation|company|runtime|process|routing|task|agent|model)|review[- ]process|staff[- ]owned|founder[- ](?:approval|approved|gated|controlled)|frontier[- ](?:review|approval))\b)'
     $findings = [System.Collections.Generic.List[string]]::new()
 
     $commitOutput = @(git -C $Root log --all --format='%H%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%s%x1f%b%x1e')
@@ -44,23 +44,17 @@ function Invoke-HygieneCheck {
         }
     }
 
-    $scopedPaths = @(
-        'CONTRIBUTING.md',
-        'CODE_OF_CONDUCT.md',
-        'docs/DEV.md',
-        'docs/report-contract.md',
-        '.github/**'
-    )
-    $trackedFiles = @(git -C $Root ls-files -- $scopedPaths)
+    $guardRelativePath = 'scripts/Invoke-RepoHygiene.ps1'
+    $trackedFiles = @(git -C $Root ls-files | Where-Object { $_ -cne $guardRelativePath })
     if ($LASTEXITCODE -ne 0) {
-        throw 'Unable to enumerate tracked developer-document and GitHub files.'
+        throw 'Unable to enumerate tracked repository files.'
     }
 
     foreach ($relativePath in $trackedFiles) {
         $path = Join-Path $Root $relativePath
         $content = Get-Content -LiteralPath $path -Raw
         if ($content -match $forbiddenPattern) {
-            $findings.Add("tracked file '$relativePath' contains prohibited authorship or internal wording")
+            $findings.Add("tracked file '$relativePath' contains prohibited authorship, internal identifier, or process wording")
         }
     }
 
@@ -86,8 +80,8 @@ function Invoke-HygieneCheck {
         throw "Repository hygiene failed with $($findings.Count) finding(s)."
     }
 
-    Write-Output "Repository hygiene: inspected $($commitRecords.Count) reachable commit record(s) and $($trackedFiles.Count) tracked scoped file(s)."
-    Write-Output 'PASS: approved KeelMatrix authors and KeelMatrix/GitHub web-flow committers passed with no prohibited authorship trailer or internal/orchestration wording.'
+    Write-Output "Repository hygiene: inspected $($commitRecords.Count) reachable commit record(s) and $($trackedFiles.Count) tracked file(s)."
+    Write-Output 'PASS: approved KeelMatrix authors and KeelMatrix/GitHub web-flow committers passed with no prohibited authorship trailer, internal identifier, or process wording.'
 }
 
 function Invoke-GitChecked {
@@ -174,6 +168,14 @@ if ($SelfTest) {
         if ($LASTEXITCODE -ne 0) { throw 'Unable to create the GitHub web-flow synthetic commit.' }
         Assert-HygieneAccepts $webFlowRoot
         Write-Output 'Repository hygiene self-test: approved GitHub web-flow committer accepted.'
+
+        $internalIdentifierRoot = Join-Path $selfTestRoot 'internal-identifier'
+        New-SyntheticRepository $internalIdentifierRoot
+        Set-Content -LiteralPath (Join-Path $internalIdentifierRoot 'tracked-leak.txt') -Encoding utf8 -Value 'PAPERCLIP_EXAMPLE_IDENTIFIER'
+        Invoke-GitChecked $internalIdentifierRoot @('add', 'tracked-leak.txt')
+        Invoke-GitChecked $internalIdentifierRoot @('commit', '--quiet', '-m', 'synthetic tracked content')
+        Assert-HygieneRejects $internalIdentifierRoot 'tracked file'
+        Write-Output 'Repository hygiene self-test: tracked internal identifier rejected.'
 
         $trailerRoot = Join-Path $selfTestRoot 'prohibited-trailer'
         New-SyntheticRepository $trailerRoot

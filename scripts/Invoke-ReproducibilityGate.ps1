@@ -7,12 +7,7 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $shippingProject = Join-Path $repositoryRoot 'src/KeelMatrix.FeedFence/KeelMatrix.FeedFence.csproj'
 $normalizer = Join-Path $repositoryRoot 'scripts/Normalize-NuGetArchive.ps1'
-$scratchParent = if (-not [string]::IsNullOrWhiteSpace($env:PAPERCLIP_RUN_SCRATCH_DIR)) {
-    $env:PAPERCLIP_RUN_SCRATCH_DIR
-}
-else {
-    [IO.Path]::GetTempPath()
-}
+$scratchParent = [IO.Path]::GetTempPath()
 $scratchParent = if ([OperatingSystem]::IsWindows()) {
     (Resolve-Path -LiteralPath $scratchParent).Path
 }
