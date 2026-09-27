@@ -35,8 +35,8 @@ function Assert-TrackedLockFiles {
     }
 }
 
-function Invoke-Restore([string]$Root) {
-    $output = & dotnet restore (Join-Path $Root 'KeelMatrix.FeedFence.sln') --configfile (Join-Path $Root 'NuGet.config') --no-cache --locked-mode 2>&1
+function Invoke-Restore([string]$Root, [string]$PackagesPath) {
+    $output = & dotnet restore (Join-Path $Root 'KeelMatrix.FeedFence.sln') --configfile (Join-Path $Root 'NuGet.config') --packages $PackagesPath --no-cache --locked-mode 2>&1
     [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($output -join [Environment]::NewLine) }
 }
 
@@ -44,23 +44,25 @@ function Invoke-Contract {
     Assert-WorkflowRestoreContract
     Assert-TrackedLockFiles
 
-    $current = Invoke-Restore $repositoryRoot
-    if ($current.ExitCode -ne 0) {
-        throw "Committed lock graph did not restore in locked mode: $($current.Output)"
-    }
-    Write-Output 'Locked restore with committed graph: PASS.'
-
     $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('feedfence-lock-contract-' + [guid]::NewGuid().ToString('N'))
     try {
-        & git clone --quiet --no-local $repositoryRoot $tempRoot
+        New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+        $current = Invoke-Restore $repositoryRoot (Join-Path $tempRoot 'current-packages')
+        if ($current.ExitCode -ne 0) {
+            throw "Committed lock graph did not restore in locked mode: $($current.Output)"
+        }
+        Write-Output 'Locked restore with committed graph: PASS.'
+
+        $cloneRoot = Join-Path $tempRoot 'clone'
+        & git clone --quiet --no-local $repositoryRoot $cloneRoot
         if ($LASTEXITCODE -ne 0) { throw 'Unable to create the clean lock-contract clone.' }
 
-        $driftPath = Join-Path $tempRoot 'src/KeelMatrix.FeedFence/packages.lock.json'
+        $driftPath = Join-Path $cloneRoot 'src/KeelMatrix.FeedFence/packages.lock.json'
         $drift = Get-Content -LiteralPath $driftPath -Raw
         $drift = $drift.Replace('"resolved": "0.1.1"', '"resolved": "0.1.2"', [StringComparison]::Ordinal)
         Set-Content -LiteralPath $driftPath -Encoding utf8 -Value $drift
 
-        $driftResult = Invoke-Restore $tempRoot
+        $driftResult = Invoke-Restore $cloneRoot (Join-Path $cloneRoot 'packages')
         if ($driftResult.ExitCode -eq 0) {
             throw 'Locked restore unexpectedly accepted a mutated committed lock file.'
         }

@@ -85,7 +85,8 @@ function Assert-NormalizedArchive([string]$ArchivePath) {
 
 function Pack-CleanClone([string]$ClonePath, [string]$Label) {
     Write-Output "[$Label] locked restore"
-    Invoke-Checked 'dotnet' @('restore', (Join-Path $ClonePath 'KeelMatrix.FeedFence.sln'), '--configfile', (Join-Path $ClonePath 'NuGet.config'), '--no-cache', '--locked-mode') $ClonePath
+    $packages = Join-Path $ClonePath 'repro-packages'
+    Invoke-Checked 'dotnet' @('restore', (Join-Path $ClonePath 'KeelMatrix.FeedFence.sln'), '--configfile', (Join-Path $ClonePath 'NuGet.config'), '--packages', $packages, '--no-cache', '--locked-mode') $ClonePath
 
     $output = Join-Path $ClonePath 'repro-artifacts'
     New-Item -ItemType Directory -Force -Path $output | Out-Null
