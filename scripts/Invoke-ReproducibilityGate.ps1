@@ -72,6 +72,23 @@ function Get-ArchiveManifestLines([string]$ArchivePath) {
     return @(Get-ZipManifest $ArchivePath | ForEach-Object { "$($_.Name)|$($_.Length)|$($_.Hash)" })
 }
 
+function Assert-BinarySame([string]$Label, [string]$FirstPath, [string]$SecondPath) {
+    $first = [IO.File]::ReadAllBytes($FirstPath)
+    $second = [IO.File]::ReadAllBytes($SecondPath)
+    $sample = [Collections.Generic.List[string]]::new()
+    $limit = [Math]::Min($first.Length, $second.Length)
+    for ($index = 0; $index -lt $limit -and $sample.Count -lt 8; $index++) {
+        if ($first[$index] -ne $second[$index]) {
+            $sample.Add("0x{0:X8}: {1:X2} != {2:X2}" -f $index, $first[$index], $second[$index])
+        }
+    }
+
+    if ($first.Length -ne $second.Length -or $sample.Count -gt 0) {
+        throw "$Label differs. Lengths: $($first.Length) != $($second.Length). First differing bytes: $($sample -join '; ')"
+    }
+    Write-Output "${Label}: PASS"
+}
+
 function Assert-NormalizedArchive([string]$ArchivePath) {
     $manifest = @(Get-ZipManifest $ArchivePath)
     if ($manifest.Count -eq 0 -or @($manifest | Where-Object { $_.LastWriteTime -ne '1980-01-01T00:00:00.0000000' }).Count -ne 0) {
@@ -130,14 +147,14 @@ try {
     $second = Pack-CleanClone $longRoot 'long-root first run'
 
     Assert-Same 'Candidate SHA' @((& git -C $shortRoot rev-parse HEAD).Trim(), (& git -C $longRoot rev-parse HEAD).Trim()) @($candidateSha, $candidateSha)
-    Assert-Same 'Shipping DLL bytes across checkout roots' @((Get-FileDigest $first.Dll), (Get-FileDigest $second.Dll)) @((Get-FileDigest $first.Dll), (Get-FileDigest $first.Dll))
-    Assert-Same 'Shipping PDB bytes across checkout roots' @((Get-FileDigest $first.Pdb), (Get-FileDigest $second.Pdb)) @((Get-FileDigest $first.Pdb), (Get-FileDigest $first.Pdb))
+    Assert-BinarySame 'Shipping DLL bytes across checkout roots' $first.Dll $second.Dll
+    Assert-BinarySame 'Shipping PDB bytes across checkout roots' $first.Pdb $second.Pdb
     Assert-Same 'Normalized nupkg entry contents across checkout roots' (Get-ArchiveManifestLines $second.Nupkg) (Get-ArchiveManifestLines $first.Nupkg)
     Assert-Same 'Normalized snupkg entry contents across checkout roots' (Get-ArchiveManifestLines $second.Snupkg) (Get-ArchiveManifestLines $first.Snupkg)
 
     $repeat = Pack-CleanClone $shortRoot 'short-root repeated run'
-    Assert-Same 'Shipping DLL bytes across repeated pack' @((Get-FileDigest $repeat.Dll), (Get-FileDigest $first.Dll)) @((Get-FileDigest $first.Dll), (Get-FileDigest $first.Dll))
-    Assert-Same 'Shipping PDB bytes across repeated pack' @((Get-FileDigest $repeat.Pdb), (Get-FileDigest $first.Pdb)) @((Get-FileDigest $first.Pdb), (Get-FileDigest $first.Pdb))
+    Assert-BinarySame 'Shipping DLL bytes across repeated pack' $repeat.Dll $first.Dll
+    Assert-BinarySame 'Shipping PDB bytes across repeated pack' $repeat.Pdb $first.Pdb
     Assert-Same 'Normalized nupkg entry contents across repeated pack' (Get-ArchiveManifestLines $repeat.Nupkg) (Get-ArchiveManifestLines $first.Nupkg)
     Assert-Same 'Normalized snupkg entry contents across repeated pack' (Get-ArchiveManifestLines $repeat.Snupkg) (Get-ArchiveManifestLines $first.Snupkg)
     Write-Output "Reproducibility claim: PASS for candidate $candidateSha (DLL/PDB bytes and normalized package entry names/bytes are invariant across two clean roots and repeated pack; raw ZIP container byte identity is not claimed)."
