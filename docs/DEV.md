@@ -65,11 +65,12 @@ isolated NuGet caches. The release workflow gives the gate its upload directory,
 so the inspected artifacts are the artifacts uploaded to the publish job.
 
 The package gate normalizes NuGet archive metadata before checking the exact
-archive allowlist. Reproducibility is claimed for shipping DLL/PDB bytes and
-normalized `.nupkg`/`.snupkg` entry names and bytes across clean checkout roots
-and repeated pack; raw ZIP container byte identity is not promised. The lock
-contract proves that the committed graph restores in locked mode and that a
-mutated lock fails closed.
+archive allowlist. Release builds also normalize the generated managed PE
+`TimeDateStamp` field to zero before packaging. Reproducibility is claimed for
+the normalized shipping DLL/PDB bytes and normalized `.nupkg`/`.snupkg` entry
+names and bytes across clean checkout roots and repeated pack; raw ZIP
+container byte identity is not promised. The lock contract proves that the
+committed graph restores in locked mode and that a mutated lock fails closed.
 
 The release contract check is intentionally expected to fail while the
 changelog remains under `[Unreleased]`:

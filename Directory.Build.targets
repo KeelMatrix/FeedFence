@@ -31,4 +31,12 @@
       Importance="High"
       Text="Sensitive pack guard: PASS (@(_FeedFencePackInput->Count()) evaluated package inputs)." />
   </Target>
+
+  <Target
+    Name="NormalizeShippingAssemblyMetadata"
+    AfterTargets="Build"
+    Condition="'$(IsShippingProject)' == 'true' And '$(Configuration)' == 'Release'">
+    <Exec
+      Command="pwsh -NoProfile -File &quot;$(MSBuildThisFileDirectory)scripts/Normalize-ManagedAssembly.ps1&quot; -Path &quot;$(TargetPath)&quot;" />
+  </Target>
 </Project>
