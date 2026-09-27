@@ -35,8 +35,13 @@ function Assert-TrackedLockFiles {
     }
 }
 
-function Invoke-Restore([string]$Root, [string]$PackagesPath) {
-    $output = & dotnet restore (Join-Path $Root 'KeelMatrix.FeedFence.sln') --configfile (Join-Path $Root 'NuGet.config') --packages $PackagesPath --no-cache --locked-mode --force-evaluate 2>&1
+function Invoke-Restore([string]$Root, [string]$PackagesPath, [bool]$ForceEvaluate) {
+    $arguments = @('restore', (Join-Path $Root 'KeelMatrix.FeedFence.sln'), '--configfile', (Join-Path $Root 'NuGet.config'), '--packages', $PackagesPath, '--no-cache', '--locked-mode')
+    if ($ForceEvaluate) {
+        $arguments += '--force-evaluate'
+    }
+
+    $output = & dotnet @arguments 2>&1
     [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($output -join [Environment]::NewLine) }
 }
 
@@ -47,7 +52,7 @@ function Invoke-Contract {
     $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('feedfence-lock-contract-' + [guid]::NewGuid().ToString('N'))
     try {
         New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-        $current = Invoke-Restore $repositoryRoot (Join-Path $tempRoot 'current-packages')
+        $current = Invoke-Restore $repositoryRoot (Join-Path $tempRoot 'current-packages') $true
         if ($current.ExitCode -ne 0) {
             throw "Committed lock graph did not restore in locked mode: $($current.Output)"
         }
@@ -65,7 +70,7 @@ function Invoke-Contract {
             [StringComparison]::Ordinal)
         Set-Content -LiteralPath $driftPath -Encoding utf8 -Value $drift
 
-        $driftResult = Invoke-Restore $cloneRoot (Join-Path $cloneRoot 'packages')
+        $driftResult = Invoke-Restore $cloneRoot (Join-Path $cloneRoot 'packages') $false
         if ($driftResult.ExitCode -eq 0) {
             throw 'Locked restore unexpectedly accepted a mutated committed lock file.'
         }
