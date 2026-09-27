@@ -62,7 +62,7 @@ function Invoke-Contract {
         $driftPath = Join-Path $cloneRoot 'src/KeelMatrix.FeedFence/packages.lock.json'
         $drift = Get-Content -LiteralPath $driftPath -Raw
         $drift = $drift.Replace(
-            '"contentHash": "70D1itnjXuiODZodCnZ9Eo19fGL2d68vT5vEU6WJow5/vXCr1mDmCAP66WfKhix3T2LYxdzRufr/pffraxuEIw=="',
+            '"contentHash": "BykSf6vn80/TIiWQxMhj2GtCXM3N91G+SdmKiS3AQeVBm44zfz/y7YrBRctkJYKk9rQWe5X4p/2DQpwKOrNumA=="',
             '"contentHash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="',
             [StringComparison]::Ordinal)
         Set-Content -LiteralPath $driftPath -Encoding utf8 -Value $drift
