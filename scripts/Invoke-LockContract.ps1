@@ -59,7 +59,10 @@ function Invoke-Contract {
 
         $driftPath = Join-Path $cloneRoot 'src/KeelMatrix.FeedFence/packages.lock.json'
         $drift = Get-Content -LiteralPath $driftPath -Raw
-        $drift = $drift.Replace('"resolved": "0.1.1"', '"resolved": "0.1.2"', [StringComparison]::Ordinal)
+        $drift = $drift.Replace(
+            '"contentHash": "70D1itnjXuiODZodCnZ9Eo19fGL2d68vT5vEU6WJow5/vXCr1mDmCAP66WfKhix3T2LYxdzRufr/pffraxuEIw=="',
+            '"contentHash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="',
+            [StringComparison]::Ordinal)
         Set-Content -LiteralPath $driftPath -Encoding utf8 -Value $drift
 
         $driftResult = Invoke-Restore $cloneRoot (Join-Path $cloneRoot 'packages')
