@@ -5,6 +5,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
+$pwshExecutable = 'pwsh'
+$launchGuard = Join-Path $repositoryRoot 'build/Test-NestedPwshLaunch.ps1'
+& $launchGuard -SelfTest
+if ($LASTEXITCODE -ne 0) { throw 'Nested PowerShell launch guard self-test failed.' }
+& $launchGuard
+if ($LASTEXITCODE -ne 0) { throw 'Nested PowerShell launch guard failed.' }
 $shippingProject = Join-Path $repositoryRoot 'src/KeelMatrix.FeedFence/KeelMatrix.FeedFence.csproj'
 $normalizer = Join-Path $repositoryRoot 'scripts/Normalize-NuGetArchive.ps1'
 $scratchParent = [IO.Path]::GetTempPath()
@@ -23,7 +30,12 @@ $scratchRoot = Join-Path $scratchParent ('feedfence-repro-' + [guid]::NewGuid().
 function Invoke-Checked([string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory) {
     Push-Location -LiteralPath $WorkingDirectory
     try {
-        & $FilePath @Arguments
+        if ($FilePath -match '^(?i:pwsh|powershell)(?:\.exe)?$') {
+            Invoke-NestedPwsh -ArgumentList $Arguments
+        }
+        else {
+            & $FilePath @Arguments
+        }
         $exitCode = $LASTEXITCODE
     }
     finally {
@@ -119,8 +131,8 @@ function Pack-CleanClone([string]$ClonePath, [string]$Label) {
 
     $nupkg = Join-Path $output "KeelMatrix.FeedFence.$PackageVersion.nupkg"
     $snupkg = Join-Path $output "KeelMatrix.FeedFence.$PackageVersion.snupkg"
-    Invoke-Checked 'pwsh' @('-NoProfile', '-File', (Join-Path $ClonePath 'scripts/Normalize-NuGetArchive.ps1'), '-Path', $nupkg) $ClonePath
-    Invoke-Checked 'pwsh' @('-NoProfile', '-File', (Join-Path $ClonePath 'scripts/Normalize-NuGetArchive.ps1'), '-Path', $snupkg) $ClonePath
+    Invoke-Checked $pwshExecutable @('-NoProfile', '-File', (Join-Path $ClonePath 'scripts/Normalize-NuGetArchive.ps1'), '-Path', $nupkg) $ClonePath
+    Invoke-Checked $pwshExecutable @('-NoProfile', '-File', (Join-Path $ClonePath 'scripts/Normalize-NuGetArchive.ps1'), '-Path', $snupkg) $ClonePath
     Assert-NormalizedArchive $nupkg
     Assert-NormalizedArchive $snupkg
 
