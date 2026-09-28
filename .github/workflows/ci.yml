@@ -49,6 +49,14 @@ jobs:
         with:
           dotnet-version: ${{ steps.sdk-version.outputs.version }}
 
+      - name: Verify hidden child PowerShell launch guard
+        shell: pwsh
+        run: ./build/Test-NestedPwshLaunch.ps1 -SelfTest
+
+      - name: Scan repository child PowerShell launches
+        shell: pwsh
+        run: ./build/Test-NestedPwshLaunch.ps1
+
       - name: Restore from repository NuGet.config
         shell: pwsh
         run: dotnet restore KeelMatrix.FeedFence.sln --configfile NuGet.config --no-cache --locked-mode

@@ -6,6 +6,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
+$pwshExecutable = 'pwsh'
+$launchGuard = Join-Path $repositoryRoot 'build/Test-NestedPwshLaunch.ps1'
+& $launchGuard -SelfTest
+if ($LASTEXITCODE -ne 0) { throw 'Nested PowerShell launch guard self-test failed.' }
+& $launchGuard
+if ($LASTEXITCODE -ne 0) { throw 'Nested PowerShell launch guard failed.' }
 $shippingProject = Join-Path (Join-Path $repositoryRoot 'src') (Join-Path 'KeelMatrix.FeedFence' 'KeelMatrix.FeedFence.csproj')
 $probeProject = Join-Path (Join-Path $repositoryRoot 'tests') (Join-Path 'Phase0Probe' 'KeelMatrix.FeedFence.Phase0Probe.csproj')
 $archiveNormalizer = Join-Path $repositoryRoot 'scripts/Normalize-NuGetArchive.ps1'
@@ -18,7 +25,12 @@ else {
 }
 
 function Invoke-Checked([string]$FilePath, [string[]]$Arguments) {
-    & $FilePath @Arguments
+    if ($FilePath -match '^(?i:pwsh|powershell)(?:\.exe)?$') {
+        Invoke-NestedPwsh -ArgumentList $Arguments
+    }
+    else {
+        & $FilePath @Arguments
+    }
     if ($LASTEXITCODE -ne 0) {
         throw "Command failed with exit code ${LASTEXITCODE}: $FilePath $($Arguments -join ' ')"
     }
@@ -535,8 +547,8 @@ try {
     $snupkgPath = Join-Path $shippingOutput "KeelMatrix.FeedFence.$PackageVersion.snupkg"
     Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-    Invoke-Checked 'pwsh' @('-NoProfile', '-File', $archiveNormalizer, '-Path', $nupkgPath)
-    Invoke-Checked 'pwsh' @('-NoProfile', '-File', $archiveNormalizer, '-Path', $snupkgPath)
+    Invoke-Checked $pwshExecutable @('-NoProfile', '-File', $archiveNormalizer, '-Path', $nupkgPath)
+    Invoke-Checked $pwshExecutable @('-NoProfile', '-File', $archiveNormalizer, '-Path', $snupkgPath)
 
     $nupkgStaticEntries = @(
         '_rels/.rels',
