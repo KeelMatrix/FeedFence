@@ -117,12 +117,30 @@ internal sealed class Fixture : IDisposable
             ?? throw new InvalidOperationException("shared telemetry has no parameterless activation API");
         AssertEqual(0, sharedTrackActivation.GetParameters().Length, "shared telemetry activation payload parameter count");
 
+        var noPackageResult = new AnalysisResult(0, 0, 1, false, 0, true, [], []);
         FeedFenceTelemetry.TrackActivation(
-            new AnalysisResult(0, 0, 1, false, 0, false, [], []),
+            noPackageResult,
             (_, _) => throw new InvalidOperationException("ineligible analysis requested telemetry"));
-        AssertEqual(false, FeedFenceTelemetry.IsActivationEligible(new AnalysisResult(0, 0, 1, false, 0, false, [], [])), "no-package telemetry activation eligibility");
+        AssertEqual(false, FeedFenceTelemetry.IsActivationEligible(noPackageResult), "no-package telemetry activation eligibility");
 
-        FeedFenceTelemetry.TrackActivation(telemetryResult, (_, _) => () => throw new InvalidOperationException("synthetic telemetry failure"));
+        var unevaluatedPolicyResult = new AnalysisResult(0, 6, 3, true, 2, false, [], []);
+        FeedFenceTelemetry.TrackActivation(
+            unevaluatedPolicyResult,
+            (_, _) => throw new InvalidOperationException("ineligible analysis requested telemetry"));
+        AssertEqual(false, FeedFenceTelemetry.IsActivationEligible(unevaluatedPolicyResult), "unevaluated source policy telemetry activation eligibility");
+
+        var telemetryFailureEscaped = false;
+        try
+        {
+            FeedFenceTelemetry.TrackActivation(
+                telemetryResult,
+                (_, _) => () => throw new InvalidOperationException("synthetic shared telemetry failure"));
+        }
+        catch (InvalidOperationException)
+        {
+            telemetryFailureEscaped = true;
+        }
+        AssertEqual(true, telemetryFailureEscaped, "FeedFence adapter delegates failure isolation to the shared client");
 
         var equal = CreateCase("equal", ["Feed.Equal"],
             [

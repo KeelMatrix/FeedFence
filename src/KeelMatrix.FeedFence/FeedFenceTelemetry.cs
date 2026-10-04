@@ -20,14 +20,7 @@ internal static class FeedFenceTelemetry
             return;
         }
 
-        try
-        {
-            createActivationRequest("feedfence", typeof(VersionInfo))();
-        }
-        catch
-        {
-            // Telemetry is best effort and must never change analysis behavior.
-        }
+        createActivationRequest("feedfence", typeof(VersionInfo))();
     }
 
     internal static bool IsActivationEligible(AnalysisResult result) =>
