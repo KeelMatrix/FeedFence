@@ -112,3 +112,7 @@ jobs:
       - name: Run release contract self-test
         shell: pwsh
         run: pwsh ./scripts/Invoke-ReleaseContract.ps1 -SelfTest
+
+      - name: Test release validation failure propagation
+        shell: pwsh
+        run: pwsh ./scripts/Test-ReleaseOrchestration.ps1

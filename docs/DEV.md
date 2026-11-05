@@ -39,6 +39,7 @@ pwsh ./scripts/Invoke-DependencyAudit.ps1
 pwsh ./scripts/Invoke-RepoHygiene.ps1
 pwsh ./scripts/Invoke-RepoHygiene.ps1 -SelfTest
 pwsh ./scripts/Invoke-ReleaseContract.ps1 -SelfTest
+pwsh ./scripts/Test-ReleaseOrchestration.ps1
 dotnet format KeelMatrix.FeedFence.sln --verify-no-changes --no-restore
 ```
 
@@ -69,6 +70,15 @@ SourceLink metadata, sensitive-input rejection, and icon byte identity. It
 installs the exact inspected `.nupkg` from a single-source local feed with
 isolated NuGet caches. The release workflow gives the gate its upload directory,
 so the inspected artifacts are the artifacts uploaded to the publish job.
+
+The [release workflow](../.github/workflows/release.yml) checks each native
+validator's exit immediately. A rejected package gate stops the release before
+the final contract check; rejection by either gate prevents artifact upload and
+the dependent publish job. The [workflow test](../scripts/Test-ReleaseOrchestration.ps1)
+executes that workflow body locally with synthetic first-gate results and the
+real final validator. It covers early and late failure, both expected files
+already present, final-gate rejection, nested shipping-helper failure, and a
+passing control. It never uploads or publishes packages.
 
 The package gate normalizes NuGet archive metadata before checking the exact
 archive allowlist. Release builds also normalize the generated managed PE

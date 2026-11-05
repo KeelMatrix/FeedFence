@@ -28,6 +28,8 @@
   verified releases publish both the tool and symbols packages, with a
   normalized two-root reproducibility gate for compiled bytes and package
   entry contents.
+- Release artifact validation stops at each rejected gate before upload or
+  publication, with local workflow regression coverage.
 - Release builds normalize the generated shipping PE timestamp so DLL and
   package contents remain reproducible across checkout roots and compiler
   hosts.

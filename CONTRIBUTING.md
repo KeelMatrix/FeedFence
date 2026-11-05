@@ -41,6 +41,7 @@ pwsh ./scripts/Invoke-DependencyAudit.ps1
 pwsh ./scripts/Invoke-RepoHygiene.ps1
 pwsh ./scripts/Invoke-RepoHygiene.ps1 -SelfTest
 pwsh ./scripts/Invoke-ReleaseContract.ps1 -SelfTest
+pwsh ./scripts/Test-ReleaseOrchestration.ps1
 dotnet format KeelMatrix.FeedFence.sln --verify-no-changes --no-restore
 ```
 

@@ -45,6 +45,10 @@ jobs:
         shell: pwsh
         run: pwsh ./scripts/Invoke-ReleaseContract.ps1 -SelfTest
 
+      - name: Test release validation failure propagation
+        shell: pwsh
+        run: pwsh ./scripts/Test-ReleaseOrchestration.ps1
+
       - name: Validate release tag and changelog
         id: release-version
         shell: pwsh
@@ -92,7 +96,13 @@ jobs:
           }
           New-Item -ItemType Directory -Force -Path artifacts/packages | Out-Null
           pwsh ./scripts/Invoke-PackGate.ps1 -Configuration Release -PackageVersion ${{ steps.release-version.outputs.version }} -ArtifactDirectory artifacts/packages
+          if ($LASTEXITCODE -ne 0) {
+            throw "Package validation failed with exit code $LASTEXITCODE."
+          }
           pwsh ./scripts/Invoke-ReleaseContract.ps1 -Tag "${{ github.ref_name }}" -ArtifactDirectory artifacts/packages
+          if ($LASTEXITCODE -ne 0) {
+            throw "Release contract validation failed with exit code $LASTEXITCODE."
+          }
 
       - name: Run reproducibility gate
         shell: pwsh
