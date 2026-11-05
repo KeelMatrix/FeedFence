@@ -611,7 +611,7 @@ try {
         'NuGet.Frameworks/7.9.0',
         'NuGet.Packaging/7.9.0',
         'NuGet.Versioning/7.9.0',
-        'System.Security.Cryptography.Pkcs/8.0.1',
+        'System.Security.Cryptography.Pkcs/8.0.2',
         'System.Security.Cryptography.ProtectedData/8.0.0'
     ) | Sort-Object
     $actualRuntimeLibraries = @($deps.libraries.Keys | Sort-Object)

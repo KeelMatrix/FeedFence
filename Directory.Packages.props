@@ -7,5 +7,7 @@
     <PackageVersion Include="KeelMatrix.Telemetry" Version="0.1.1" />
     <PackageVersion Include="NuGet.Configuration" Version="7.9.0" />
     <PackageVersion Include="NuGet.Packaging" Version="7.9.0" />
+    <!-- Security servicing floor for the NuGet.Packaging dependency. -->
+    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="8.0.2" />
   </ItemGroup>
 </Project>
