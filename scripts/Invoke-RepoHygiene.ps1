@@ -7,10 +7,12 @@ $ErrorActionPreference = 'Stop'
 
 $allowedAuthorIdentities = @(
     'KeelMatrix <keelmatrix@users.noreply.github.com>',
+    'KeelMatrix <230870363+KeelMatrix@users.noreply.github.com>',
     'KeelMatrix <keelmatrix@gmail.com>'
 )
 $allowedCommitterIdentities = @(
     'KeelMatrix <keelmatrix@users.noreply.github.com>',
+    'KeelMatrix <230870363+KeelMatrix@users.noreply.github.com>',
     'GitHub <noreply@github.com>'
 )
 
@@ -108,6 +110,18 @@ function New-SyntheticRepository {
     Invoke-GitChecked $Root @('commit', '--quiet', '-m', 'synthetic fixture')
 }
 
+function New-SyntheticCommit {
+    param([string]$Root, [string]$Message)
+
+    $messagePath = Join-Path $Root '.git/fixture-message.txt'
+    [System.IO.File]::WriteAllText($messagePath, $Message, [System.Text.UTF8Encoding]::new($false))
+    Invoke-GitChecked $Root @('commit', '--quiet', '--allow-empty', '-F', $messagePath)
+    $actualMessage = @(git -C $Root log -1 --format='%B') -join "`n"
+    if ($LASTEXITCODE -ne 0 -or $actualMessage.TrimEnd() -cne $Message.TrimEnd()) {
+        throw 'Synthetic commit message did not preserve the intended subject and body.'
+    }
+}
+
 function Assert-HygieneRejects {
     param(
         [string]$Root,
@@ -169,6 +183,30 @@ if ($SelfTest) {
         Assert-HygieneAccepts $webFlowRoot
         Write-Output 'Repository hygiene self-test: approved GitHub web-flow committer accepted.'
 
+        $legacyEmail = 'keelmatrix@users.noreply.github.com'
+        $githubEmail = '230870363+KeelMatrix@users.noreply.github.com'
+        $identityCases = @(
+            @{ Name = 'github-author'; AuthorEmail = $githubEmail; CommitterEmail = $legacyEmail; Finding = '' },
+            @{ Name = 'github-committer'; AuthorEmail = $legacyEmail; CommitterEmail = $githubEmail; Finding = '' },
+            @{ Name = 'github-both'; AuthorEmail = $githubEmail; CommitterEmail = $githubEmail; Finding = '' },
+            @{ Name = 'wrong-author-id'; AuthorEmail = '230870364+KeelMatrix@users.noreply.github.com'; CommitterEmail = $legacyEmail; Finding = 'unexpected author identity' },
+            @{ Name = 'wrong-committer-id'; AuthorEmail = $legacyEmail; CommitterEmail = '230870364+KeelMatrix@users.noreply.github.com'; Finding = 'unexpected committer identity' },
+            @{ Name = 'wrong-author-login'; AuthorEmail = '230870363+OtherAccount@users.noreply.github.com'; CommitterEmail = $legacyEmail; Finding = 'unexpected author identity' },
+            @{ Name = 'wrong-committer-login'; AuthorEmail = $legacyEmail; CommitterEmail = '230870363+OtherAccount@users.noreply.github.com'; Finding = 'unexpected committer identity' }
+        )
+        foreach ($case in $identityCases) {
+            $identityRoot = Join-Path $selfTestRoot $case.Name
+            New-SyntheticRepository $identityRoot
+            Invoke-GitChecked $identityRoot @('-c', "user.email=$($case.CommitterEmail)", 'commit', '--quiet', '--allow-empty', "--author=KeelMatrix <$($case.AuthorEmail)>", '-m', 'synthetic identity')
+            if ($case.Finding) {
+                Assert-HygieneRejects $identityRoot $case.Finding
+            }
+            else {
+                Assert-HygieneAccepts $identityRoot
+            }
+            Write-Output "Repository hygiene self-test: $($case.Name) identity checked."
+        }
+
         $internalIdentifierRoot = Join-Path $selfTestRoot 'internal-identifier'
         New-SyntheticRepository $internalIdentifierRoot
         Set-Content -LiteralPath (Join-Path $internalIdentifierRoot 'tracked-leak.txt') -Encoding utf8 -Value 'PAPERCLIP_EXAMPLE_IDENTIFIER'
@@ -182,7 +220,7 @@ if ($SelfTest) {
         Set-Content -LiteralPath (Join-Path $trailerRoot 'trailer.txt') -Encoding utf8 -Value 'prohibited trailer'
         Invoke-GitChecked $trailerRoot @('add', 'trailer.txt')
         $trailerMessage = "synthetic prohibited trailer`n`nCo-Authored-By: Someone <someone@example.invalid>"
-        Invoke-GitChecked $trailerRoot @('commit', '--quiet', '-m', $trailerMessage)
+        New-SyntheticCommit $trailerRoot $trailerMessage
         Assert-HygieneRejects $trailerRoot 'contains prohibited authorship'
         Write-Output 'Repository hygiene self-test: prohibited-trailer commit rejected.'
 
@@ -193,6 +231,67 @@ if ($SelfTest) {
         Invoke-GitChecked $internalWordingRoot @('commit', '--quiet', '-m', 'synthetic internal process wording')
         Assert-HygieneRejects $internalWordingRoot 'contains prohibited authorship'
         Write-Output 'Repository hygiene self-test: internal wording commit rejected.'
+
+        $messageCases = @(
+            @{ Name = 'subject'; Message = 'synthetic maintenance (KEE-1234)'; Reachability = 'ancestor' },
+            @{ Name = 'body'; Message = "synthetic maintenance`n`nRelated: kee-1234"; Reachability = 'ancestor' },
+            @{ Name = 'branch'; Message = 'synthetic maintenance (KEE-1234)'; Reachability = 'branch' },
+            @{ Name = 'tag'; Message = 'synthetic maintenance (KEE-1234)'; Reachability = 'tag' }
+        )
+        foreach ($case in $messageCases) {
+            $messageRoot = Join-Path $selfTestRoot ('message-' + $case.Name)
+            New-SyntheticRepository $messageRoot
+            $defaultBranch = (git -C $messageRoot symbolic-ref --short HEAD).Trim()
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to read the synthetic default branch.' }
+            Invoke-GitChecked $messageRoot @('checkout', '-b', 'message-fixture')
+            New-SyntheticCommit $messageRoot $case.Message
+            if ($case.Reachability -eq 'ancestor') {
+                Invoke-GitChecked $messageRoot @('commit', '--quiet', '--allow-empty', '-m', 'synthetic clean tip')
+            }
+            else {
+                if ($case.Reachability -eq 'tag') {
+                    Invoke-GitChecked $messageRoot @('tag', 'message-fixture')
+                }
+                Invoke-GitChecked $messageRoot @('checkout', $defaultBranch)
+                if ($case.Reachability -eq 'tag') {
+                    Invoke-GitChecked $messageRoot @('branch', '-D', 'message-fixture')
+                }
+            }
+            Assert-HygieneRejects $messageRoot 'contains prohibited authorship'
+            Write-Output "Repository hygiene self-test: prohibited $($case.Name) message rejected across $($case.Reachability) history."
+        }
+
+        $publicReferenceRoot = Join-Path $selfTestRoot 'public-reference'
+        New-SyntheticRepository $publicReferenceRoot
+        New-SyntheticCommit $publicReferenceRoot "synthetic maintenance (#1234)`n`nSee public issue #5678."
+        Assert-HygieneAccepts $publicReferenceRoot
+        Write-Output 'Repository hygiene self-test: public numeric issue references accepted.'
+
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new('pwsh')
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        foreach ($argument in @('-NoProfile', '-NonInteractive', '-File', $PSCommandPath, '-RepositoryRoot', (Join-Path $selfTestRoot 'message-subject'))) {
+            $startInfo.ArgumentList.Add($argument)
+        }
+        $process = [System.Diagnostics.Process]::Start($startInfo)
+        try {
+            $stdout = $process.StandardOutput.ReadToEndAsync()
+            $stderr = $process.StandardError.ReadToEndAsync()
+            if (-not $process.WaitForExit(30000)) {
+                $process.Kill($true)
+                throw 'Repository hygiene process self-test timed out.'
+            }
+            $output = $stdout.Result + $stderr.Result
+            if ($process.ExitCode -ne 1 -or $output -notmatch 'prohibited' -or $output -notmatch 'authorship') {
+                throw 'Repository hygiene process self-test did not propagate the prohibited-message failure.'
+            }
+            Write-Output 'Repository hygiene self-test: prohibited message exits the workflow process with failure.'
+        }
+        finally {
+            $process.Dispose()
+        }
 
         $mutableWorkflowRoot = Join-Path $selfTestRoot 'mutable-workflow'
         New-SyntheticRepository $mutableWorkflowRoot

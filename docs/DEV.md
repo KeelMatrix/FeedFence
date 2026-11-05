@@ -46,6 +46,12 @@ The platform fixture runs the same artifact against the current OS. The Phase 0
 probe and package gate use synthetic/offline fixtures where specified; neither
 should be changed to contact a real package feed during analysis.
 
+The [repository hygiene check](../scripts/Invoke-RepoHygiene.ps1) owns the exact
+commit identity allowlists, including the KeelMatrix account's GitHub ID-based
+noreply address. It checks every reachable commit, including other branches and
+tags, for prohibited attribution and internal wording. Its self-test covers
+identity lookalikes, message subjects and bodies, and a failing process exit.
+
 The CLI contracts and installed-package gate include an unknown dependency
 target and a declared-dependency omission that must fail with exit code `2`,
 all official package-bearing target flag values, a supported non-package
