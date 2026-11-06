@@ -7,6 +7,7 @@ namespace KeelMatrix.FeedFence;
 internal static class RestoreGraphReader
 {
     private static readonly string[] DeclaredDependencySeparators = [" >= ", " > ", " <= ", " < ", " (>= ", " (> ", " (<= ", " (< "];
+    private static readonly string[] AllAssetFlags = ["compile", "runtime", "native", "contentfiles", "analyzers", "build", "buildtransitive"];
     private static readonly Dictionary<string, DeclaredDependencyTarget> DeclaredDependencyTargets =
         new Dictionary<string, DeclaredDependencyTarget>(StringComparer.OrdinalIgnoreCase)
         {
@@ -227,7 +228,8 @@ internal static class RestoreGraphReader
         JsonElement projectFrameworks,
         IReadOnlyDictionary<string, Dictionary<string, TargetLibrary>> targetLibrariesByFramework,
         string? targetFrameworkOverride = null,
-        string? selectedEvaluatedFramework = null)
+        string? selectedEvaluatedFramework = null,
+        bool isReferencedProject = false)
     {
         var declaredDependencyCount = 0;
         foreach (var projectFramework in projectFrameworks.EnumerateObject()
@@ -272,6 +274,11 @@ internal static class RestoreGraphReader
 
                 var dependencyTarget = ParseDeclaredDependencyTarget(targetKind.GetString()!);
                 var isPackageDependency = dependencyTarget.HasFlag(DeclaredDependencyTarget.Package);
+                var privateDependency = IsFullyPrivate(dependency.Value, "suppressParent");
+                if (isReferencedProject && privateDependency)
+                {
+                    continue;
+                }
 
                 foreach (var matchingTarget in matchingTargets)
                 {
@@ -623,7 +630,7 @@ internal static class RestoreGraphReader
                 }
                 EvaluatedFrameworks(project);
                 // Reuse the declared-target/type validator for evaluated inputs, including child projects.
-                ValidateOfficialPackageDependencies(project.GetProperty("frameworks"), targets, rootFramework, selectedFramework);
+                ValidateOfficialPackageDependencies(project.GetProperty("frameworks"), targets, rootFramework, selectedFramework, depth != 0);
                 var restoreFramework = project.GetProperty("restore").GetProperty("frameworks").EnumerateObject()
                     .Single(item => FrameworkName(item.Name) == selectedFramework).Value;
                 if (!restoreFramework.TryGetProperty("projectReferences", out var references) || references.ValueKind != JsonValueKind.Object)
@@ -633,6 +640,14 @@ internal static class RestoreGraphReader
                 EnsureCount(references, 4096, "evaluated restore input evidence contains too many project references.");
                 foreach (var reference in references.EnumerateObject())
                 {
+                    // NuGet keeps a root's direct edges even when private. Only
+                    // fully private edges of referenced projects leave this graph.
+                    // Asset inclusion/exclusion does not remove dependency nodes.
+                    var privateReference = IsFullyPrivate(reference.Value, "privateAssets");
+                    if (depth != 0 && privateReference)
+                    {
+                        continue;
+                    }
                     var referencePath = Path.GetFullPath(reference.Name);
                     if (!evidence.Projects.TryGetValue(referencePath, out var child))
                     {
@@ -647,7 +662,7 @@ internal static class RestoreGraphReader
                         }
                     }
                     var childFrameworks = EvaluatedFrameworks(child);
-                    var nearest = new FrameworkReducer().GetNearest(NuGetFramework.Parse(selectedFramework), childFrameworks.Keys.Select(NuGetFramework.Parse));
+                    var nearest = new FrameworkReducer().GetNearest(NuGetFramework.Parse(rootFramework), childFrameworks.Keys.Select(NuGetFramework.Parse));
                     if (nearest is null)
                     {
                         throw new AnalysisException("evaluated restore input evidence has incompatible project-reference frameworks.");
@@ -656,6 +671,32 @@ internal static class RestoreGraphReader
                 }
             }
         }
+    }
+
+    private static bool IsFullyPrivate(JsonElement dependency, string property)
+    {
+        if (dependency.ValueKind != JsonValueKind.Object)
+        {
+            throw new AnalysisException("evaluated restore input evidence contains invalid dependency flow metadata.");
+        }
+        if (!dependency.TryGetProperty(property, out var value)) return false;
+        if (value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(value.GetString()))
+        {
+            throw new AnalysisException("evaluated restore input evidence contains invalid dependency flow flags.");
+        }
+        var flags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var segment in value.GetString()!.Split([',', ';']))
+        {
+            var flag = segment.Trim().ToLowerInvariant();
+            if (flag is not ("all" or "none" or "compile" or "runtime" or "native" or "contentfiles" or "analyzers" or "build" or "buildtransitive"))
+            {
+                throw new AnalysisException("evaluated restore input evidence contains unsupported dependency flow flags.");
+            }
+            flags.Add(flag);
+            // NuGet's BuildTransitive flag also includes Build.
+            if (flag == "buildtransitive") flags.Add("build");
+        }
+        return flags.Contains("all") || AllAssetFlags.All(flags.Contains);
     }
 
     private static void EnsureNonEmpty(JsonElement element, string message)

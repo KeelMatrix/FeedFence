@@ -51,6 +51,8 @@ pwsh ./scripts/Test-ReleaseOrchestration.ps1
 - Use evaluated `.nuget.dgspec.json` restore inputs rather than interpreting
   project XML. Validate dependency closure and required framework/runtime targets
   in assets and lock graphs; NuGet lock runtime entries are base-framework deltas.
+  Project dependencies follow the selected root/framework and NuGet private-edge
+  flow; direct-root and independent unsuppressed paths remain mandatory.
 - Every declared solution member must be accounted for or fail explicitly.
 - The shipping tool has no supported in-process library API in this milestone.
 - Do not add a public API analyzer baseline to the tool project.

@@ -73,6 +73,10 @@ bounds, physical provenance, mapping winners and effective source security.
 The package gate repeats these cases against its isolated installed command.
 For focused development, run the built test executable with `--families-only`;
 add `--tool <installed-feedfence-path>` to exercise an installed artifact.
+Use `--private-flow-only` for the real local-feed package/project privacy cases,
+including nested and independently included paths, asset flags, selected
+frameworks, all three artifact modes and applicable-node omission negatives.
+These cases run in both the shipping suite and the isolated installed-package gate.
 `tests/Write-RestoreFixture.ps1` supplies evaluated-input companions only for
 synthetic parser fixtures; the restore-equivalence tests use real SDK output.
 

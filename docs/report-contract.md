@@ -37,6 +37,10 @@ JSON is intended for automation. Successful reports are written to stdout;
 invocation and analysis failures are written to stderr and do not mix progress
 text into the JSON document.
 
+Package coverage follows the selected root/framework, including NuGet private
+child dependency flow. Direct-root and independently included dependencies remain
+required. This does not change the version-1 report shape or exit-code meanings.
+
 Incomplete restore graphs/evaluated inputs and malformed solution membership
 produce exit `2` with no JSON/SARIF success document. Unknown winning mapping
 keys produce `FF004` and, when no configured enabled winner remains, `FF003`

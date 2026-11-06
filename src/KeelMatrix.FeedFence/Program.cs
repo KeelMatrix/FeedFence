@@ -84,6 +84,7 @@ internal sealed record CliOptions(
             "Package IDs use NuGet's normal package-ID validation; unsafe or malformed identities fail closed.",
             "Declared dependency targets must use supported NuGet values and compatible assets records.",
             "Requires the last restore's obj/<project-file-name>.nuget.dgspec.json evaluated inputs.",
+            "Checks selected-root/framework dependency flow, including private child edges.",
             "Incomplete dependency closure or solution membership fails with exit 2 and no partial report.",
             "FF006 reports enabled HTTP sources and disabled TLS certificate validation.",
             "FF003 reports no eligible mapped source, including zero enabled sources when mapping is active.",

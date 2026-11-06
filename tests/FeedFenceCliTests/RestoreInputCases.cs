@@ -10,7 +10,7 @@ namespace KeelMatrix.FeedFence.CliTests;
 
 // These cases start from real SDK restore output and run through either the shipping
 // DLL or the installed command. Fixture restores use only synthetic local packages.
-internal sealed class RestoreInputCases : IDisposable
+internal sealed partial class RestoreInputCases : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "feedfence-restore-inputs-" + Guid.NewGuid().ToString("N"));
     private readonly string _tool;
@@ -58,6 +58,7 @@ internal sealed class RestoreInputCases : IDisposable
     {
         GraphClosure();
         EvaluatedInputs();
+        PrivateDependencyFlow();
         SolutionMembers();
         ConfigInputs();
         PhysicalProvenance();
@@ -615,18 +616,24 @@ internal sealed class RestoreInputCases : IDisposable
         if (mode is "assets" or "combined")
         {
             var assets = Read(fixture.Assets);
-            foreach (var target in assets["targets"]!.AsObject()) target.Value!.AsObject().Remove(id + "/1.0.0");
-            assets["libraries"]!.AsObject().Remove(id + "/1.0.0");
+            foreach (var target in assets["targets"]!.AsObject()) RemoveIdentity(target.Value!.AsObject(), id, versioned: true);
+            RemoveIdentity(assets["libraries"]!.AsObject(), id, versioned: true);
             Write(fixture.Assets, assets);
         }
         if (mode is "lock" or "combined")
         {
             var lockFile = Read(fixture.Lock);
-            foreach (var framework in lockFile["dependencies"]!.AsObject()) framework.Value!.AsObject().Remove(id);
+            foreach (var framework in lockFile["dependencies"]!.AsObject()) RemoveIdentity(framework.Value!.AsObject(), id);
             Write(fixture.Lock, lockFile);
         }
         if (mode == "assets") File.Delete(fixture.Lock);
         if (mode == "lock") File.Delete(fixture.Assets);
+    }
+
+    private static void RemoveIdentity(JsonObject nodes, string id, bool versioned = false)
+    {
+        foreach (var key in nodes.Select(item => item.Key).Where(key => string.Equals(versioned ? key.Split('/')[0] : key, id, StringComparison.OrdinalIgnoreCase)).ToArray())
+            nodes.Remove(key);
     }
 
     private static JsonObject Read(string path) => JsonNode.Parse(File.ReadAllText(path))!.AsObject();

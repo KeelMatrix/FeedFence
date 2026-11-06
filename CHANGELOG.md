@@ -8,7 +8,8 @@ Consumer-facing capabilities and release history for FeedFence.
 
 - Offline NuGet source-policy checks for already-restored SDK projects and whole
   solutions, using evaluated restore inputs and complete package/project
-  dependency graphs. Incomplete evidence fails without a partial success report.
+  dependency graphs, respecting private dependency flow for the selected project
+  and framework. Incomplete evidence fails without a partial success report.
 - NuGet configuration hierarchy and Package Source Mapping analysis with
   exact/prefix/wildcard specificity, source identity checks, physical repository
   provenance, protected-package policy and narrow reasoned exceptions.

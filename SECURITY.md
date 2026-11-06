@@ -26,7 +26,10 @@ analysis. Reports involving unexpected network access, credential handling, or
 diagnostic disclosure should be treated as security-sensitive.
 
 Graph checks use the SDK's evaluated restore input companion and validate direct
-and transitive package/project dependency closure. Incomplete evidence fails
+and transitive package/project dependency closure for the selected root and
+framework. Fully private child edges do not flow into an ancestor graph; direct
+root dependencies and independently included paths still require resolved nodes.
+Incomplete evidence fails
 without a partial success report. Project XML, imports and build targets are
 never executed during analysis. Configuration bounds apply before NuGet parses
 hierarchy files or implicit machine defaults. Missing user defaults are never
