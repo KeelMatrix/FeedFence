@@ -10,7 +10,7 @@ dotnet restore
 feedfence check
 ```
 
-FeedFence reads existing `project.assets.json` and/or `packages.lock.json`. For assets files, every declared dependency in `projectFileDependencyGroups` must be represented in the corresponding framework target and library graph. Every dependency identified as a package by `project.frameworks.<tfm>.dependencies` must resolve to identity-matched, package-typed target and library records. An unexplained omission or type conflict fails with exit code `2`; a genuine SDK `ProjectReference` or empty declared-and-resolved package graph remains valid. FeedFence never runs restore, contacts a package feed, invokes a credential provider, or connects to a database. Restore the repository first.
+FeedFence reads existing `project.assets.json` and/or `packages.lock.json`, together with the SDK's evaluated `obj/<project-file-name>.nuget.dgspec.json` restore inputs. It checks framework coverage, direct dependencies, and dependency edges from both package and project nodes. Missing nodes, incomplete framework containers, and type conflicts fail with exit code `2`, with no partial success report. Genuine SDK `ProjectReference` and zero-package restores remain valid. FeedFence never runs restore, evaluates project XML, contacts a package feed, invokes a credential provider, or connects to a database. Restore the repository first and restore again after changing project inputs or build properties.
 
 Package IDs use NuGet's normal package-ID validation, including Unicode and long valid IDs. Unsafe or malformed identities such as credential-shaped URLs, control-character payloads, quotes, backslashes, and path-like values fail closed before they can reach reports.
 
@@ -40,7 +40,7 @@ dotnet restore
 feedfence check
 ```
 
-Name a target explicitly with `feedfence check ./src/App/App.csproj`. Restore must already have produced `project.assets.json` or `packages.lock.json`; missing, malformed, or disagreeing artifacts fail with exit code `2`.
+Name a target explicitly with `feedfence check ./src/App/App.csproj`. Restore must already have produced the graph and evaluated input evidence described above; missing, malformed, or disagreeing artifacts fail with exit code `2`. Every declared solution member must be supported and readable. Malformed or unsupported members fail the whole analysis; solution folders are preserved as folders.
 
 ## Documentation
 
@@ -58,7 +58,7 @@ feedfence --help
 feedfence --version
 ```
 
-`path` may be one solution, one project, or an omitted path (the current directory). `--config <path>` replaces NuGet hierarchy discovery with the specified configuration. `--policy <path>` selects an explicit policy file; otherwise `feedfence.json` is read from the repository root when present. `--strict` promotes inherited active-source warning `FF005` to a violation. `--format` defaults to deterministic text and also supports deterministic JSON and SARIF.
+`path` may be one solution, one project, or an omitted path (the current directory). `--config <path>` replaces NuGet hierarchy discovery with the specified configuration; NuGet's implicit machine defaults still apply. `--policy <path>` selects an explicit policy file; otherwise `feedfence.json` is read from the repository root when present. `--strict` promotes inherited active-source warning `FF005` to a violation. `--format` defaults to deterministic text and also supports deterministic JSON and SARIF.
 
 Successful reports are written only to stdout. Invocation and analysis errors are written only to stderr; machine output is never mixed with progress or noise.
 
@@ -75,15 +75,21 @@ Exit codes are stable:
 * `FF003` — a direct or transitive resolved package has no eligible mapped source (violation). Correct mapping and restore; FeedFence does not restore for you.
 * `FF004` — a mapping source key does not correspond to any configured source key (violation). NuGet accepts case-only differences; genuinely invalid source identities still fail. URLs do not define source identity.
 * `FF005` — an active source comes from inherited or external configuration (warning; violation with `--strict`). Move required policy into the repository or document intentional inheritance.
-* `FF006` — a source uses plain HTTP (violation). Use HTTPS or a narrow documented exception; FeedFence does not validate reachability or credentials.
+* `FF006` — an enabled source uses plain HTTP or disables TLS certificate validation (violation). Use HTTPS with certificate validation or a narrow reasoned exception. Disabled sources are inapplicable; ordinary HTTPS and local file feeds are allowed. FeedFence does not validate reachability or credentials.
 * `FF007` — a protected/private package can resolve outside its declared trust set (violation). Map it to the trusted source or add a reasoned narrow exception.
 * `FF008` — informational reminder that mapping limits package downloads, not every NuGet metadata query. It never changes the exit code.
 
-Mapping selection follows NuGet specificity: exact package ID, then the longest matching prefix, then `*`; equal winning specificity remains ambiguous. Diagnostics name package IDs, safe source labels, winning mapping patterns, and normalized configuration provenance. Sensitive source keys are represented by stable opaque labels; URLs, credentials, query strings, usernames, and full local paths are not printed.
+Mapping selection follows NuGet specificity across the complete mapping set: exact package ID, then the longest matching prefix, then `*`. Unknown or disabled winning source keys do not promote a less-specific mapping. Unknown keys produce `FF004`; a package left without an eligible source produces `FF003`. Equally winning enabled sources produce `FF002`. Diagnostics name package IDs, safe source labels, winning mapping patterns, and normalized configuration provenance. Sensitive source keys are represented by stable opaque labels; URLs, credentials, query strings, usernames, and full local paths are not printed.
 
 ## Effective configuration, `<clear />`, and two feeds
 
-NuGet combines repository, user, and computer-wide configuration. `<clear />` resets the relevant collection before repository entries are added. A public/private configuration keeps source and mapping keys exactly aligned:
+NuGet combines repository, user, and computer-wide configuration. `<clear />` resets the relevant collection before repository entries are added.
+
+Additional user `.config` and `.Config` files are ordered as one combined set. Analysis never creates a missing user configuration. If it is absent and repository/path configuration does not clear package sources, FeedFence exits `2` because NuGet can initialize default sources. Run `dotnet nuget list source` yourself to initialize it, or supply `--config`. A repository `<packageSources><clear /></packageSources>` permits read-only analysis without that user file. The separate `NuGetDefaults.Config` input remains applicable even with `<clear />` or `--config` and is bounded before NuGet parses it.
+
+Repository control uses the complete physical ancestry of both the source configuration and repository root, including symbolic links and junctions. An unresolved physical path is reported as uncontrolled, never accepted from its spelling alone.
+
+A public/private configuration keeps source and mapping keys exactly aligned:
 
 ```xml
 <packageSources>
@@ -138,7 +144,7 @@ FeedFence calls the shared client's parameterless activation API with the tool n
 
 ## Limitations and privacy
 
-FeedFence verifies resolved local restore artifacts and effective NuGet configuration. It does not scan vulnerabilities or licenses, query package availability, validate credentials, rewrite configuration, invoke restore, or claim to be a network-isolation sandbox. Configuration, XML, JSON, and restore inputs are size/depth/count bounded; assets schema versions `3` and `4` accept at most 50,000 libraries/resolved packages, 256 target frameworks, and 100,000 target-library or declared-dependency references. Assets files must contain object-valued `targets`, `libraries`, `projectFileDependencyGroups`, and `project.frameworks`; each declared dependency must appear in every corresponding framework target and have an identity-matched library record. Dependency-target metadata must use nonzero official NuGet target names or flag combinations. Target and library types must agree; any target carrying the `Package` semantic must use `package` records, and non-package targets must use a compatible record type. Malformed, incomplete, unsupported, or inconsistent graphs fail closed with exit code `2`, while genuine project records and an empty declared-and-resolved package graph remain valid. XML DTD and external entity processing is disabled.
+FeedFence verifies the last restore's evaluated inputs and resolved graph at the standard output locations. It does not scan vulnerabilities or licenses, query package availability, validate credentials, rewrite configuration, invoke restore, or claim to be a network-isolation sandbox. Assets schemas `3`/`4`, lock schemas `1`/`2`, and evaluated input schema `1` are supported. Assets and evaluated inputs are bounded to 32 MiB each; lock files to 8 MiB. Each graph is limited to 50,000 libraries/resolved packages, 256 frameworks, and 100,000 target-library or dependency-edge references. Evaluated input evidence permits at most 4,096 projects and 128 nested project references. Framework containers must be nonempty even when they resolve no packages. Package/project dependency edges must close within each corresponding target. Declared dependency targets must use supported NuGet names or flag combinations; package-bearing targets require package records and non-package targets require compatible records. Malformed, incomplete, unsupported, or inconsistent evidence fails with exit `2`. NuGet configuration files, including implicit defaults, are limited to 2 MiB, XML depth 64 and 100,000 elements before eager parsing. XML DTD and external entity processing is disabled.
 
 The tool has no supported in-process library API in v1. It targets `net8.0`.
 
@@ -148,7 +154,8 @@ FeedFence supports Windows, Linux, and macOS. The repository's three-OS CI matri
 
 ## Troubleshooting and non-goals
 
-- Missing restore artifacts: run `dotnet restore` for the same target; FeedFence never restores for you.
+- Missing restore artifacts or evaluated inputs: run `dotnet restore` for the same target and intended configuration/TFMs; retain its `.nuget.dgspec.json` companion. FeedFence never restores or executes MSBuild for you.
+- Absent user NuGet configuration: initialize it with `dotnet nuget list source`, use an explicit `--config`, or clear inherited package sources in repository configuration.
 - Malformed config/policy or assets disagreement: fix the input and rerun; FeedFence fails closed with exit `2`.
 - `FF004`: mapping identity is matched to the configured source key using NuGet's case-insensitive source identity; case-only differences are accepted, while an unknown source key fails.
 - `FF005`: inspect user/machine configuration and move required policy into the repository, or use strict mode.

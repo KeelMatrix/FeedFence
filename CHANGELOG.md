@@ -1,35 +1,21 @@
 # Changelog
 
+Consumer-facing capabilities and release history for FeedFence.
+
 ## [Unreleased]
 
 ### Added
 
-- Added a hermetic Phase 0 feasibility probe for NuGet configuration hierarchy,
-  Package Source Mapping precedence, restore equivalence, and source-origin
-  provenance.
-- Added deterministic JSON and SARIF reports with stable `FF001`–`FF008`
-  identities and an explicit stdout/stderr contract.
-- Added opt-out-aware shared activation measurement, three-platform fixture
-  coverage, and an isolated package-consumer smoke gate.
-- Added fail-closed restore-graph completeness validation, including the
-  official dependency-target domain, flag combinations, and compatible
-  target/library record types, alongside
-  solution-folder-aware target discovery and repository-relative sensitive
-  package-input checks.
-
-### Changed
-
-- Package identity checks now use NuGet's normal validator, preserving valid Unicode and long IDs while rejecting unsafe or malformed identities before report rendering.
-- Repository hygiene now accepts the approved GitHub web-flow committer for valid KeelMatrix-authored commits while retaining prohibited-attribution and internal-wording checks.
-- Schema-v1 policy parsing now rejects unknown and duplicate members, restore
-  validation rejects incomplete or type-laundered graphs, and machine reports
-  use one documented JSON shape with redacted untrusted identities.
-- CI and release restores use committed lock graphs and immutable action pins;
-  verified releases publish both the tool and symbols packages, with a
-  normalized two-root reproducibility gate for compiled bytes and package
-  entry contents.
-- Release artifact validation stops at each rejected gate before upload or
-  publication, with local workflow regression coverage.
-- Release builds normalize the generated shipping PE timestamp so DLL and
-  package contents remain reproducible across checkout roots and compiler
-  hosts.
+- Offline NuGet source-policy checks for already-restored SDK projects and whole
+  solutions, using evaluated restore inputs and complete package/project
+  dependency graphs. Incomplete evidence fails without a partial success report.
+- NuGet configuration hierarchy and Package Source Mapping analysis with
+  exact/prefix/wildcard specificity, source identity checks, physical repository
+  provenance, protected-package policy and narrow reasoned exceptions.
+- Stable `FF001`–`FF008` diagnostics, including inherited active sources, HTTP
+  sources and disabled TLS certificate validation, with deterministic text,
+  JSON and SARIF output and redacted sensitive values.
+- Read-only configuration analysis with pre-parse input bounds, explicit
+  handling of absent user defaults and implicit machine configuration.
+- A .NET 8 tool for Windows, Linux and macOS, with opt-out-aware shared
+  activation measurement and isolated installed-package validation.

@@ -1,4 +1,6 @@
 using System.Text.Json;
+using NuGet.Frameworks;
+using NuGet.Versioning;
 
 namespace KeelMatrix.FeedFence;
 
@@ -42,9 +44,9 @@ internal static class RestoreGraphReader
                 throw new AnalysisException("restore artifacts are missing; run restore first, then run FeedFence again.");
             }
 
-            var declaredPackageIds = ProjectPackageReferenceReader.Read(projectPath);
-            var assetsPackages = hasAssets ? ReadAssets(assetsPath, declaredPackageIds) : null;
-            var lockPackages = hasLock ? ReadLockFile(lockPath, declaredPackageIds) : null;
+            var evaluated = EvaluatedRestoreReader.Read(projectPath);
+            var assetsPackages = hasAssets ? ReadAssets(assetsPath, evaluated) : null;
+            var lockPackages = hasLock ? ReadLockFile(lockPath, evaluated) : null;
             if (assetsPackages is not null && lockPackages is not null &&
                 !assetsPackages.SetEquals(lockPackages))
             {
@@ -63,7 +65,7 @@ internal static class RestoreGraphReader
         return packages.Values.Order(StringComparer.OrdinalIgnoreCase).ThenBy(value => value, StringComparer.Ordinal).ToArray();
     }
 
-    private static HashSet<string> ReadAssets(string path, IReadOnlySet<string> declaredPackageIds)
+    private static HashSet<string> ReadAssets(string path, EvaluatedRestoreEvidence evaluated)
     {
         using var document = ParseJson(path, MaxBytes: 32 * 1024 * 1024, "project.assets.json");
         var root = document.RootElement;
@@ -84,12 +86,9 @@ internal static class RestoreGraphReader
         EnsureCount(dependencyGroups, InputLimits.MaxAssetFrameworkCount, "project.assets.json contains too many dependency groups.");
         EnsureCount(projectFrameworks, InputLimits.MaxAssetFrameworkCount, "project.assets.json contains too many project frameworks.");
         EnsureCount(libraries, InputLimits.MaxAssetLibraryCount, "project.assets.json contains too many libraries.");
-        if (declaredPackageIds.Count > 0)
-        {
-            EnsureNonEmpty(targets, "project.assets.json contains no target frameworks.");
-            EnsureNonEmpty(dependencyGroups, "project.assets.json contains no dependency groups.");
-            EnsureNonEmpty(projectFrameworks, "project.assets.json contains no project frameworks.");
-        }
+        EnsureNonEmpty(targets, "project.assets.json contains no target frameworks.");
+        EnsureNonEmpty(dependencyGroups, "project.assets.json contains no dependency groups.");
+        EnsureNonEmpty(projectFrameworks, "project.assets.json contains no project frameworks.");
 
         var libraryTypes = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var library in libraries.EnumerateObject())
@@ -139,7 +138,7 @@ internal static class RestoreGraphReader
                     throw new AnalysisException($"project.assets.json is inconsistent; target and library types disagree for '{libraryName}'.");
                 }
 
-                if (!frameworkDependencyNames.TryAdd(libraryName, new TargetLibrary(targetType)))
+                if (!frameworkDependencyNames.TryAdd(libraryName, new TargetLibrary(targetType, targetLibrary.Value, targetLibrary.Name[(targetLibrary.Name.LastIndexOf('/') + 1)..])))
                 {
                     throw new AnalysisException("project.assets.json is inconsistent; a target framework contains multiple identities for one library.");
                 }
@@ -155,6 +154,8 @@ internal static class RestoreGraphReader
 
         ValidateDeclaredDependencies(dependencyGroups, targetLibrariesByFramework);
         ValidateOfficialPackageDependencies(projectFrameworks, targetLibrariesByFramework);
+        ValidateDependencyClosure(targetLibrariesByFramework, "project.assets.json");
+        ValidateEvaluatedDependencies(evaluated, targetLibrariesByFramework, "project.assets.json", projectFrameworks, dependencyGroups);
 
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var library in libraryTypes)
@@ -178,11 +179,6 @@ internal static class RestoreGraphReader
             }
         }
 
-        if (declaredPackageIds.Any(packageId => !result.Contains(packageId)))
-        {
-            throw new AnalysisException("project.assets.json is incomplete; a package declared by the project is not represented in the resolved package graph.");
-        }
-
         return result;
     }
 
@@ -196,11 +192,6 @@ internal static class RestoreGraphReader
             if (dependencyGroup.Value.ValueKind != JsonValueKind.Array)
             {
                 throw new AnalysisException("project.assets.json contains an invalid dependency group.");
-            }
-
-            if (dependencyGroup.Value.GetArrayLength() == 0)
-            {
-                continue;
             }
 
             var matchingTargets = targetLibrariesByFramework
@@ -234,10 +225,13 @@ internal static class RestoreGraphReader
 
     private static void ValidateOfficialPackageDependencies(
         JsonElement projectFrameworks,
-        IReadOnlyDictionary<string, Dictionary<string, TargetLibrary>> targetLibrariesByFramework)
+        IReadOnlyDictionary<string, Dictionary<string, TargetLibrary>> targetLibrariesByFramework,
+        string? targetFrameworkOverride = null,
+        string? selectedEvaluatedFramework = null)
     {
         var declaredDependencyCount = 0;
-        foreach (var projectFramework in projectFrameworks.EnumerateObject())
+        foreach (var projectFramework in projectFrameworks.EnumerateObject()
+            .Where(item => selectedEvaluatedFramework is null || FrameworkName(item.Name) == selectedEvaluatedFramework))
         {
             if (projectFramework.Value.ValueKind != JsonValueKind.Object)
             {
@@ -246,8 +240,7 @@ internal static class RestoreGraphReader
 
             var matchingTargets = targetLibrariesByFramework
                 .Where(target =>
-                    string.Equals(target.Key, projectFramework.Name, StringComparison.OrdinalIgnoreCase) ||
-                    target.Key.StartsWith(projectFramework.Name + "/", StringComparison.OrdinalIgnoreCase))
+                    FrameworkName(target.Key) == FrameworkName(targetFrameworkOverride ?? projectFramework.Name))
                 .Select(target => target.Value)
                 .ToArray();
             if (matchingTargets.Length == 0)
@@ -374,7 +367,7 @@ internal static class RestoreGraphReader
         return typeValue;
     }
 
-    private sealed record TargetLibrary(string Type);
+    private sealed record TargetLibrary(string Type, JsonElement Record, string? Version);
 
     [Flags]
     private enum DeclaredDependencyTarget : ushort
@@ -390,14 +383,14 @@ internal static class RestoreGraphReader
         PackageProjectExternal = Package | Project | ExternalProject
     }
 
-    private static HashSet<string> ReadLockFile(string path, IReadOnlySet<string> declaredPackageIds)
+    private static HashSet<string> ReadLockFile(string path, EvaluatedRestoreEvidence evaluated)
     {
         using var document = ParseJson(path, MaxBytes: 8 * 1024 * 1024, "packages.lock.json");
         var root = document.RootElement;
         if (!root.TryGetProperty("version", out var version) ||
             version.ValueKind != JsonValueKind.Number ||
             !version.TryGetInt32(out var schemaVersion) ||
-            schemaVersion != 2 ||
+            schemaVersion is not (1 or 2) ||
             !root.TryGetProperty("dependencies", out var dependencies) || dependencies.ValueKind != JsonValueKind.Object)
         {
             throw new AnalysisException("packages.lock.json is incomplete; run restore first, then run FeedFence again.");
@@ -406,6 +399,8 @@ internal static class RestoreGraphReader
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         EnsureCount(dependencies, InputLimits.MaxLockFrameworkCount, "packages.lock.json contains too many target frameworks.");
         EnsureNonEmpty(dependencies, "packages.lock.json contains no target frameworks.");
+        var targets = new Dictionary<string, Dictionary<string, TargetLibrary>>(StringComparer.OrdinalIgnoreCase);
+        var nodeCount = 0;
         foreach (var framework in dependencies.EnumerateObject())
         {
             if (framework.Value.ValueKind != JsonValueKind.Object)
@@ -413,8 +408,17 @@ internal static class RestoreGraphReader
                 throw new AnalysisException("packages.lock.json contains an invalid framework entry.");
             }
 
+            var nodes = new Dictionary<string, TargetLibrary>(StringComparer.OrdinalIgnoreCase);
+            if (!targets.TryAdd(framework.Name, nodes))
+            {
+                throw new AnalysisException("packages.lock.json contains duplicate target frameworks.");
+            }
             foreach (var package in framework.Value.EnumerateObject())
             {
+                if (++nodeCount > InputLimits.MaxAssetTargetLibraryCount)
+                {
+                    throw new AnalysisException("packages.lock.json contains too many target library references.");
+                }
                 var packageId = InputIdentity.RequirePackageId(package.Name, "packages.lock.json contains an invalid package identity.");
                 if (result.Count >= InputLimits.MaxResolvedPackageCount)
                 {
@@ -432,9 +436,9 @@ internal static class RestoreGraphReader
 
                 if (string.Equals(packageTypeValue, "Project", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (declaredPackageIds.Contains(packageId))
+                    if (!nodes.TryAdd(packageId, new TargetLibrary("project", package.Value, null)))
                     {
-                        throw new AnalysisException("packages.lock.json marks a project dependency as a package declared by the project.");
+                        throw new AnalysisException("packages.lock.json contains duplicate library identities.");
                     }
 
                     continue;
@@ -448,15 +452,210 @@ internal static class RestoreGraphReader
                 }
 
                 result.Add(packageId);
+                if (!nodes.TryAdd(packageId, new TargetLibrary("package", package.Value, resolved.GetString())))
+                {
+                    throw new AnalysisException("packages.lock.json contains duplicate library identities.");
+                }
             }
         }
 
-        if (declaredPackageIds.Any(packageId => !result.Contains(packageId)))
+        // NuGet writes RID lock targets as differences from the base TFM graph.
+        // Compose the effective target before checking its edges and evaluated roots.
+        var effectiveLibraryCount = targets.Where(item => !item.Key.Contains('/')).Sum(item => item.Value.Count);
+        foreach (var target in targets.Where(item => item.Key.Contains('/')).ToArray())
         {
-            throw new AnalysisException("packages.lock.json is incomplete; a package declared by the project is not represented in the resolved package graph.");
+            var baseTarget = targets.FirstOrDefault(item => !item.Key.Contains('/') && FrameworkName(item.Key) == FrameworkName(target.Key));
+            if (baseTarget.Value is null)
+            {
+                throw new AnalysisException("packages.lock.json is incomplete; a runtime target has no base framework graph.");
+            }
+            effectiveLibraryCount += baseTarget.Value.Count + target.Value.Keys.Count(key => !baseTarget.Value.ContainsKey(key));
+            if (effectiveLibraryCount > InputLimits.MaxAssetTargetLibraryCount)
+            {
+                throw new AnalysisException("packages.lock.json contains too many effective target library references.");
+            }
+            var effective = new Dictionary<string, TargetLibrary>(baseTarget.Value, StringComparer.OrdinalIgnoreCase);
+            foreach (var node in target.Value) effective[node.Key] = node.Value;
+            targets[target.Key] = effective;
         }
+        ValidateDependencyClosure(targets, "packages.lock.json");
+        ValidateEvaluatedDependencies(evaluated, targets, "packages.lock.json");
 
         return result;
+    }
+
+    private static void ValidateDependencyClosure(
+        IReadOnlyDictionary<string, Dictionary<string, TargetLibrary>> targets, string artifact)
+    {
+        var edgeCount = 0;
+        foreach (var nodes in targets.Values)
+        {
+            foreach (var node in nodes.Values)
+            {
+                if (!node.Record.TryGetProperty("dependencies", out var dependencies))
+                {
+                    continue;
+                }
+                if (dependencies.ValueKind != JsonValueKind.Object)
+                {
+                    throw new AnalysisException($"{artifact} contains invalid dependency edges; restore again before analysis.");
+                }
+                var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var dependency in dependencies.EnumerateObject())
+                {
+                    InputIdentity.RequirePackageId(dependency.Name, $"{artifact} contains an invalid dependency identity.");
+                    if (++edgeCount > InputLimits.MaxAssetTargetLibraryCount || !names.Add(dependency.Name) ||
+                        dependency.Value.ValueKind != JsonValueKind.String ||
+                        !VersionRange.TryParse(dependency.Value.GetString()!, out var range))
+                    {
+                        throw new AnalysisException($"{artifact} contains too many or invalid dependency edges.");
+                    }
+                    if (!nodes.TryGetValue(dependency.Name, out var resolved))
+                    {
+                        throw new AnalysisException($"{artifact} is incomplete; a package or project dependency has no resolved node in its target framework. Restore again before analysis.");
+                    }
+                    if (resolved.Version is not null &&
+                        (!NuGetVersion.TryParse(resolved.Version, out var version) || !range.Satisfies(version)))
+                    {
+                        throw new AnalysisException($"{artifact} contains an inconsistent resolved dependency version; restore again before analysis.");
+                    }
+                }
+            }
+        }
+    }
+
+    private static string FrameworkName(string target)
+    {
+        var framework = NuGetFramework.Parse(target.Split('/')[0]);
+        if (framework.IsUnsupported)
+        {
+            throw new AnalysisException("restore evidence contains an unsupported target framework.");
+        }
+        return framework.GetShortFolderName();
+    }
+
+    private static string TargetName(string target)
+    {
+        var separator = target.IndexOf('/');
+        return FrameworkName(target) + (separator < 0 ? "" : target[separator..]);
+    }
+
+    private static Dictionary<string, JsonElement> EvaluatedFrameworks(JsonElement project)
+    {
+        if (project.ValueKind != JsonValueKind.Object ||
+            !project.TryGetProperty("frameworks", out var frameworks) || frameworks.ValueKind != JsonValueKind.Object ||
+            !project.TryGetProperty("restore", out var restore) || restore.ValueKind != JsonValueKind.Object ||
+            !restore.TryGetProperty("projectStyle", out var style) || style.GetString() != "PackageReference" ||
+            !restore.TryGetProperty("frameworks", out var restoreFrameworks) || restoreFrameworks.ValueKind != JsonValueKind.Object ||
+            !restore.TryGetProperty("originalTargetFrameworks", out var originals) || originals.ValueKind != JsonValueKind.Array)
+        {
+            throw new AnalysisException("evaluated restore input evidence is incomplete; restore again before analysis.");
+        }
+        EnsureCount(frameworks, InputLimits.MaxAssetFrameworkCount, "evaluated restore input evidence contains too many frameworks.");
+        var result = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+        foreach (var framework in frameworks.EnumerateObject())
+        {
+            if (framework.Value.ValueKind != JsonValueKind.Object || !result.TryAdd(FrameworkName(framework.Name), framework.Value))
+            {
+                throw new AnalysisException("evaluated restore input evidence contains invalid or duplicate frameworks.");
+            }
+        }
+        var names = result.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var aliases = result.Select(item => item.Value.TryGetProperty("targetAlias", out var alias) ? alias.GetString()! : item.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (names.Count == 0 || originals.GetArrayLength() == 0 ||
+            !names.SetEquals(restoreFrameworks.EnumerateObject().Select(item => FrameworkName(item.Name))) ||
+            !aliases.SetEquals(originals.EnumerateArray().Select(item => item.GetString()!)))
+        {
+            throw new AnalysisException("evaluated restore input evidence has incomplete framework containers; restore again before analysis.");
+        }
+        return result;
+    }
+
+    private static void ValidateEvaluatedDependencies(
+        EvaluatedRestoreEvidence evidence,
+        IReadOnlyDictionary<string, Dictionary<string, TargetLibrary>> targets,
+        string artifact,
+        JsonElement? assetFrameworks = null,
+        JsonElement? dependencyGroups = null)
+    {
+        var root = evidence.Projects[evidence.ProjectPath];
+        var rootFrameworks = EvaluatedFrameworks(root);
+        var expected = rootFrameworks.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var expectedTargets = new HashSet<string>(expected, StringComparer.OrdinalIgnoreCase);
+        if (root.TryGetProperty("runtimes", out var runtimes))
+        {
+            if (runtimes.ValueKind != JsonValueKind.Object)
+            {
+                throw new AnalysisException("evaluated restore input evidence contains invalid runtime identifiers.");
+            }
+            EnsureCount(runtimes, InputLimits.MaxAssetTargetCount, "evaluated restore input evidence contains too many runtime identifiers.");
+            foreach (var runtime in runtimes.EnumerateObject())
+            {
+                if (string.IsNullOrWhiteSpace(runtime.Name) || runtime.Name.Contains('/') || runtime.Name.Contains('\\'))
+                {
+                    throw new AnalysisException("evaluated restore input evidence contains an invalid runtime identifier.");
+                }
+                foreach (var framework in expected) expectedTargets.Add(framework + "/" + runtime.Name);
+            }
+        }
+        if (expectedTargets.Count > InputLimits.MaxAssetTargetCount || targets.Count != expectedTargets.Count ||
+            !expectedTargets.SetEquals(targets.Keys.Select(TargetName)) ||
+            (assetFrameworks is { } af && !expected.SetEquals(af.EnumerateObject().Select(item => FrameworkName(item.Name)))) ||
+            (dependencyGroups is { } dg && !expected.SetEquals(dg.EnumerateObject().Select(item => FrameworkName(item.Name)))))
+        {
+            throw new AnalysisException($"{artifact} has incomplete target/framework containers compared with evaluated restore inputs; restore again before analysis.");
+        }
+        foreach (var framework in rootFrameworks.Keys)
+        {
+            var visited = new HashSet<(string, string)>();
+            Visit(evidence.ProjectPath, framework, framework, 0);
+
+            void Visit(string projectPath, string selectedFramework, string rootFramework, int depth)
+            {
+                if (!visited.Add((projectPath, selectedFramework)))
+                {
+                    return;
+                }
+                if (depth > 128 || visited.Count > 4096 || !evidence.Projects.TryGetValue(projectPath, out var project))
+                {
+                    throw new AnalysisException("evaluated restore input evidence is missing a referenced project or exceeds the project limit.");
+                }
+                EvaluatedFrameworks(project);
+                // Reuse the declared-target/type validator for evaluated inputs, including child projects.
+                ValidateOfficialPackageDependencies(project.GetProperty("frameworks"), targets, rootFramework, selectedFramework);
+                var restoreFramework = project.GetProperty("restore").GetProperty("frameworks").EnumerateObject()
+                    .Single(item => FrameworkName(item.Name) == selectedFramework).Value;
+                if (!restoreFramework.TryGetProperty("projectReferences", out var references) || references.ValueKind != JsonValueKind.Object)
+                {
+                    throw new AnalysisException("evaluated restore input evidence has missing or invalid project-reference metadata.");
+                }
+                EnsureCount(references, 4096, "evaluated restore input evidence contains too many project references.");
+                foreach (var reference in references.EnumerateObject())
+                {
+                    var referencePath = Path.GetFullPath(reference.Name);
+                    if (!evidence.Projects.TryGetValue(referencePath, out var child))
+                    {
+                        throw new AnalysisException("evaluated restore input evidence is missing a referenced project; restore again before analysis.");
+                    }
+                    var projectId = InputIdentity.RequirePackageId(child.GetProperty("restore").GetProperty("projectName").GetString()!, "evaluated restore input evidence contains an invalid project identity.");
+                    foreach (var target in targets.Where(item => FrameworkName(item.Key) == rootFramework))
+                    {
+                        if (!target.Value.TryGetValue(projectId, out var node) || !string.Equals(node.Type, "project", StringComparison.OrdinalIgnoreCase))
+                        {
+                            throw new AnalysisException($"{artifact} is incomplete; an evaluated project reference has no project node in its target framework.");
+                        }
+                    }
+                    var childFrameworks = EvaluatedFrameworks(child);
+                    var nearest = new FrameworkReducer().GetNearest(NuGetFramework.Parse(selectedFramework), childFrameworks.Keys.Select(NuGetFramework.Parse));
+                    if (nearest is null)
+                    {
+                        throw new AnalysisException("evaluated restore input evidence has incompatible project-reference frameworks.");
+                    }
+                    Visit(referencePath, nearest.GetShortFolderName(), rootFramework, depth + 1);
+                }
+            }
+        }
     }
 
     private static void EnsureNonEmpty(JsonElement element, string message)

@@ -5,6 +5,8 @@
 - `src/KeelMatrix.FeedFence` is the single packable `net8.0` .NET tool project.
 - `tests/Phase0Probe` is the mandatory offline NuGet feasibility probe and its
   synthetic fixture corpus.
+- `tests/FeedFenceCliTests` covers shipping and installed CLI contracts, including
+  real SDK restore evidence and bounded malformed-input families.
 - `scripts` contains local validation helpers.
 - `README.md`, `SECURITY.md`, and `PRIVACY.md` are developer-facing contracts.
 
@@ -46,6 +48,10 @@ pwsh ./scripts/Test-ReleaseOrchestration.ps1
 - The probe must not implement a second NuGet configuration or mapping engine.
 - Analysis is read-only with respect to fixture inputs and must not invoke
   network sources or credential providers.
+- Use evaluated `.nuget.dgspec.json` restore inputs rather than interpreting
+  project XML. Validate dependency closure and required framework/runtime targets
+  in assets and lock graphs; NuGet lock runtime entries are base-framework deltas.
+- Every declared solution member must be accounted for or fail explicitly.
 - The shipping tool has no supported in-process library API in this milestone.
 - Do not add a public API analyzer baseline to the tool project.
 

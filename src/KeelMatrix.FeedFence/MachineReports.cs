@@ -178,7 +178,7 @@ internal static class DiagnosticRules
         new("FF003", "UnmappedResolvedPackage", "A resolved package has no eligible active mapped source.", DiagnosticSeverity.Violation),
         new("FF004", "MappingSourceKeyMismatch", "A mapping source identity does not correspond to any configured source identity; case-only differences follow NuGet source-key matching.", DiagnosticSeverity.Violation),
         new("FF005", "InheritedActiveSource", "An active source originates outside repository-controlled configuration.", DiagnosticSeverity.Warning),
-        new("FF006", "InsecureSource", "An applicable source uses plain HTTP or another insecure source form.", DiagnosticSeverity.Violation),
+        new("FF006", "InsecureSource", "An enabled source uses plain HTTP or disables TLS certificate validation.", DiagnosticSeverity.Violation),
         new("FF007", "ProtectedPatternEscape", "A protected or private package can resolve outside its declared trust set.", DiagnosticSeverity.Violation),
         new("FF008", "MappingScopeLimitation", "Package Source Mapping does not constrain every NuGet metadata query.", DiagnosticSeverity.Information)
     ];

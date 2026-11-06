@@ -52,6 +52,19 @@ function Get-PhysicalDirectory([string]$Path) {
     return $physical
 }
 
+function New-LockContractClone([string]$Path) {
+    & git clone --quiet --no-local --no-checkout $repositoryRoot $Path
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to create the lock-contract clone.' }
+    & git -C $Path config core.sparseCheckout true
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to configure the lock-contract checkout.' }
+    & git -C $Path config core.sparseCheckoutCone false
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to configure sparse checkout patterns.' }
+    Set-Content -LiteralPath (Join-Path $Path '.git/info/sparse-checkout') -Value @('/*', '!/icon.png')
+    & git -C $Path checkout --quiet HEAD
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to check out the lock-contract candidate.' }
+    if (Test-Path -LiteralPath (Join-Path $Path 'icon.png')) { throw 'Lock-contract checkout must not materialize the icon.' }
+}
+
 function Invoke-Contract {
     Assert-WorkflowRestoreContract
     Assert-TrackedLockFiles
@@ -61,16 +74,14 @@ function Invoke-Contract {
     try {
         New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
         $cleanRoot = Join-Path $tempRoot 'clean'
-        & git clone --quiet --no-local $repositoryRoot $cleanRoot
-        if ($LASTEXITCODE -ne 0) { throw 'Unable to create the clean lock-contract clone.' }
+        New-LockContractClone $cleanRoot
 
         $current = Invoke-Restore $cleanRoot (Join-Path $cleanRoot 'packages')
         if ($current.ExitCode -ne 0) { throw "Committed lock graph did not restore in locked mode: $($current.Output)" }
         Write-Output 'Locked restore with committed graph: PASS.'
 
         $cloneRoot = Join-Path $tempRoot 'drift'
-        & git clone --quiet --no-local $repositoryRoot $cloneRoot
-        if ($LASTEXITCODE -ne 0) { throw 'Unable to create the lock-drift clone.' }
+        New-LockContractClone $cloneRoot
 
         $driftPath = Join-Path $cloneRoot 'src/KeelMatrix.FeedFence/packages.lock.json'
         $drift = Get-Content -LiteralPath $driftPath -Raw

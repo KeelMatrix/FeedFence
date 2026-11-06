@@ -7,18 +7,28 @@ namespace KeelMatrix.FeedFence.CliTests;
 
 internal static class Program
 {
-    private static int Main()
+    private static int Main(string[] args)
     {
         try
         {
-            using var fixture = new Fixture();
-            fixture.RunAll();
+            var toolIndex = Array.IndexOf(args, "--tool");
+            var tool = toolIndex < 0 ? Path.Combine(AppContext.BaseDirectory, "KeelMatrix.FeedFence.dll") : args[toolIndex + 1];
+            if (!args.Contains("--families-only", StringComparer.Ordinal))
+            {
+                using var fixture = new Fixture(tool);
+                fixture.RunAll();
+            }
+            if (!args.Contains("--legacy-only", StringComparer.Ordinal))
+            {
+                using var restoreCases = new RestoreInputCases(tool);
+                restoreCases.RunAll();
+            }
             Console.WriteLine("PASS: FeedFence CLI contract tests");
             return 0;
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine($"FAIL: {exception.Message}");
+            Console.Error.WriteLine($"FAIL: {exception}");
             return 1;
         }
     }
@@ -33,10 +43,10 @@ internal sealed class Fixture : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "feedfence-cli-tests-" + Guid.NewGuid().ToString("N"));
     private readonly string _tool;
 
-    public Fixture()
+    public Fixture(string tool)
     {
         Directory.CreateDirectory(_root);
-        _tool = Path.Combine(AppContext.BaseDirectory, "KeelMatrix.FeedFence.dll");
+        _tool = tool;
         if (!File.Exists(_tool))
         {
             throw new InvalidOperationException("the shipping tool was not copied to the test output.");
@@ -278,7 +288,8 @@ internal sealed class Fixture : IDisposable
         AssertNotContains(redacted.Output, _root);
 
         var disagreement = Path.Combine(Path.GetDirectoryName(specificity.Project)!, "packages.lock.json");
-        File.WriteAllText(disagreement, "{\"version\":2,\"dependencies\":{\"net8.0\":{\"Different.Package\":{\"type\":\"Transitive\",\"resolved\":\"1.0.0\"}}}}", Encoding.UTF8);
+        var disagreeingPackages = new[] { "Feed.Exact", "Feed.Prefix.Item", "Feed.Wildcard", "Different.Package" };
+        File.WriteAllText(disagreement, JsonSerializer.Serialize(new { version = 2, dependencies = new Dictionary<string, object> { ["net8.0"] = disagreeingPackages.ToDictionary(id => id, id => new { type = "Direct", resolved = "1.0.0" }) } }), Encoding.UTF8);
         var disagreementResult = Run("check", specificity.Project, "--config", specificity.Config!);
         AssertEqual(2, disagreementResult.ExitCode, "assets/lock disagreement exit code");
         AssertContains(disagreementResult.Output, "project.assets.json and packages.lock.json disagree");
@@ -989,6 +1000,7 @@ internal sealed class Fixture : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(project)!);
         Directory.CreateDirectory(Path.Combine(Path.GetDirectoryName(project)!, "obj"));
         File.WriteAllText(project, "<Project />", Encoding.UTF8);
+        WriteEvaluatedEvidence(project, packages);
         var libraries = packages.ToDictionary(package => package + "/1.0.0", package => (object)new { type = "package" });
         var targetLibraries = packages.ToDictionary(package => package + "/1.0.0", package => (object)new { type = "package" });
         File.WriteAllText(
@@ -1012,6 +1024,7 @@ internal sealed class Fixture : IDisposable
 
     private static void WritePackageProject(string project, IReadOnlyList<string> packages)
     {
+        WriteEvaluatedEvidence(project, packages);
         var references = string.Join(
             string.Empty,
             packages.Select(package => $"<PackageReference Include=\"{SecurityElement.Escape(package)}\" Version=\"1.0.0\" />"));
@@ -1113,6 +1126,7 @@ internal sealed class Fixture : IDisposable
             }
         };
         File.WriteAllText(Path.Combine(projectDirectory, "obj", "project.assets.json"), JsonSerializer.Serialize(assets), Encoding.UTF8);
+        WriteEvaluatedEvidence(project, coherentTargets ? packages : []);
 
         var sourceElements = sourceKeys.Select((key, index) =>
         {
@@ -1141,6 +1155,24 @@ internal sealed class Fixture : IDisposable
                     package => (object)new { target = "Package", version = "[1.0.0, )" })
             }
         };
+    }
+
+    private static void WriteEvaluatedEvidence(string project, IReadOnlyList<string> packages)
+    {
+        var frameworks = CreateProjectFrameworks(packages);
+        var metadata = new
+        {
+            frameworks,
+            restore = new
+            {
+                projectStyle = "PackageReference",
+                projectName = Path.GetFileNameWithoutExtension(project),
+                originalTargetFrameworks = new[] { "net8.0" },
+                frameworks = new Dictionary<string, object> { ["net8.0"] = new { projectReferences = new Dictionary<string, object>() } }
+            }
+        };
+        File.WriteAllText(Path.Combine(Path.GetDirectoryName(project)!, "obj", Path.GetFileName(project) + ".nuget.dgspec.json"),
+            JsonSerializer.Serialize(new { format = 1, restore = new Dictionary<string, object> { [project] = new { } }, projects = new Dictionary<string, object> { [project] = metadata } }), Encoding.UTF8);
     }
 
     private static void WriteDependencyTargetAssets(string projectPath, string dependencyTarget, string targetType, string libraryType)
@@ -1320,7 +1352,7 @@ internal sealed class Fixture : IDisposable
 
     private ProcessResult Run(IReadOnlyDictionary<string, string?> environment, params string[] args)
     {
-        var startInfo = new ProcessStartInfo("dotnet")
+        var startInfo = new ProcessStartInfo(_tool.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ? "dotnet" : _tool)
         {
             WorkingDirectory = _root,
             RedirectStandardOutput = true,
@@ -1343,7 +1375,10 @@ internal sealed class Fixture : IDisposable
                 startInfo.Environment[entry.Key] = entry.Value;
             }
         }
-        startInfo.ArgumentList.Add(_tool);
+        if (_tool.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            startInfo.ArgumentList.Add(_tool);
+        }
         foreach (var arg in args)
         {
             startInfo.ArgumentList.Add(arg);

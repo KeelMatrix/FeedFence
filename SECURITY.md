@@ -25,6 +25,19 @@ It must not contact package sources or invoke credential providers during
 analysis. Reports involving unexpected network access, credential handling, or
 diagnostic disclosure should be treated as security-sensitive.
 
+Graph checks use the SDK's evaluated restore input companion and validate direct
+and transitive package/project dependency closure. Incomplete evidence fails
+without a partial success report. Project XML, imports and build targets are
+never executed during analysis. Configuration bounds apply before NuGet parses
+hierarchy files or implicit machine defaults. Missing user defaults are never
+silently modeled as fewer sources, and analysis does not initialize user files.
+
+Repository control requires resolved physical ancestry, including links and
+junctions; resolution failure cannot assert repository ownership. `FF006`
+reports enabled HTTP sources and disabled TLS certificate validation. Exceptions
+must be narrow and reasoned. These checks do not verify a server's certificate,
+reachability or credentials and do not contact the feed.
+
 FeedFence telemetry is best-effort and activates only after a completed analysis
 with a resolved package and an effective source-policy evaluation. FeedFence
 calls the shared client's parameterless activation API and attaches no analysis

@@ -15,7 +15,7 @@ Use a repository-local tool manifest with `dotnet new tool-manifest` and
 `dotnet tool update --global KeelMatrix.FeedFence` or `dotnet tool update --local KeelMatrix.FeedFence`; uninstall with the corresponding `dotnet tool uninstall`
 command.
 
-FeedFence reads existing `project.assets.json` and/or `packages.lock.json`. For assets files, every declared dependency in `projectFileDependencyGroups` must be represented in the corresponding framework target and library graph. Every dependency identified as a package by `project.frameworks.<tfm>.dependencies` must resolve to identity-matched, package-typed target and library records. Missing, incomplete, or type-inconsistent restore artifacts fail with exit code `2` and an instruction to restore first; a genuine SDK `ProjectReference` or empty package graph remains valid.
+FeedFence reads existing `project.assets.json` and/or `packages.lock.json`, together with evaluated `obj/<project-file-name>.nuget.dgspec.json` restore inputs. It checks framework coverage, direct dependencies, and dependency edges from package and project nodes. Incomplete or inconsistent evidence fails with exit `2` without a partial report. Genuine SDK `ProjectReference` and zero-package restores remain valid. Restore again after changing project inputs or build properties; FeedFence analyzes the last restore and never evaluates project XML or runs MSBuild. Every declared solution member must be supported and readable; malformed members fail the whole analysis, while solution folders remain valid.
 
 Package IDs use NuGet's normal package-ID validation, including Unicode and long valid IDs. Unsafe or malformed identities such as credential-shaped URLs, control-character payloads, quotes, backslashes, and path-like values fail closed before they can reach reports.
 
@@ -27,7 +27,7 @@ feedfence --help
 feedfence --version
 ```
 
-Use `--config <path>` to replace NuGet hierarchy discovery, `--policy <path>` for an explicit `feedfence.json`, `--strict` to promote inherited-source warning `FF005` to a violation, and `--format text|json|sarif` for deterministic text, JSON schema `1`, or SARIF `2.1.0`. Reports go only to stdout; invocation and analysis errors go only to stderr.
+Use `--config <path>` to replace NuGet hierarchy discovery (implicit machine defaults still apply), `--policy <path>` for an explicit `feedfence.json`, `--strict` to promote inherited-source warning `FF005` to a violation, and `--format text|json|sarif` for deterministic text, JSON schema `1`, or SARIF `2.1.0`. Reports go only to stdout; invocation and analysis errors go only to stderr.
 
 Exit codes: `0` means analysis and policy passed, `1` means one or more policy violations, and `2` means invocation, environment, or analysis failure.
 
@@ -37,12 +37,16 @@ The optional repository-root `feedfence.json` supports source trust labels, prot
 
 The tool targets `net8.0`, has no supported in-process API in v1, and makes no analysis-time network or credential-provider calls. Package Source Mapping limits package downloads, not every NuGet metadata query; `FF008` is informational only.
 
-Configuration and restore inputs are bounded. Assets schema versions `3` and `4` accept at most 50,000 libraries/resolved packages, 256 target frameworks, and 100,000 target-library or declared-dependency references. Assets files must contain object-valued `targets`, `libraries`, `projectFileDependencyGroups`, and `project.frameworks`; each declared dependency must appear in every corresponding framework target and have an identity-matched library record. Dependency-target metadata must use nonzero official NuGet target names or flag combinations. Target and library types must agree; any target carrying the `Package` semantic must use `package` records, and non-package targets must use a compatible record type. Incomplete, unsupported, or inconsistent graphs fail closed with exit code `2`, while genuine project records and an empty package graph pass with zero packages.
+Configuration and restore inputs are bounded. Assets schemas `3`/`4`, lock schemas `1`/`2`, and evaluated input schema `1` are supported. Assets and evaluated inputs are limited to 32 MiB each; locks to 8 MiB. Graph limits are 50,000 libraries/resolved packages, 256 frameworks and 100,000 target-library/dependency-edge references. Evaluated inputs permit 4,096 projects and 128 nested project references. Required framework containers remain nonempty for zero-package restores. Dependency targets use supported NuGet names/flag combinations and compatible record types. All NuGet configuration inputs, including `NuGetDefaults.Config`, are checked before eager parsing against 2 MiB, XML depth 64 and 100,000 elements; DTD/external entity processing is disabled.
 
 NuGet configuration is hierarchical and `<clear />` resets a collection. Exact
 mapping IDs beat the longest prefix, which beats `*`; equal winners produce
 `FF002`. Inherited active sources produce `FF005`. A successful restore does not
 prove repository-owned deterministic policy.
+
+Unknown or disabled winning mapping keys cannot promote less-specific patterns: unknown keys produce `FF004`, and no eligible source produces `FF003`. `FF006` reports enabled HTTP sources and HTTPS sources that disable TLS certificate validation; normal HTTPS/local feeds pass, and narrow exceptions require a target and reason. Repository provenance resolves complete path ancestry, including links and junctions; unresolved paths are uncontrolled.
+
+Analysis never creates a missing user configuration. If no repository/path `packageSources` clear removes possible user defaults, an absent user file produces exit `2`. Initialize it with `dotnet nuget list source` or use `--config`. Machine `NuGetDefaults.Config` still applies even with an explicit config or clear. Additional user `.config`/`.Config` files share NuGet's combined ordering.
 
 The optional policy schema supports `version: 1`, `sourceTrust`,
 `protectedPackages`, `privatePackages`, and `exceptions`. Every exception needs

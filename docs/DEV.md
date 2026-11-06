@@ -62,6 +62,17 @@ proves that safe inputs below parent directories
 named `Temp`, `tmp`, and `artifacts` are accepted while secret-bearing and
 repository-internal inputs remain rejected.
 
+The CLI suite also starts with real local-feed SDK restores and mutates their
+assets/lock graphs. It covers package/project dependency closure, zero-package
+and multi-framework containers, evaluated conditions/imports/item operations,
+complete solution membership, NuGet configuration differentials and pre-parse
+bounds, physical provenance, mapping winners and effective source security.
+The package gate repeats these cases against its isolated installed command.
+For focused development, run the built test executable with `--families-only`;
+add `--tool <installed-feedfence-path>` to exercise an installed artifact.
+`tests/Write-RestoreFixture.ps1` supplies evaluated-input companions only for
+synthetic parser fixtures; the restore-equivalence tests use real SDK output.
+
 ## Release preparation
 
 The shipping project is the only packable project. The package gate validates
@@ -78,14 +89,20 @@ the dependent publish job. The [workflow test](../scripts/Test-ReleaseOrchestrat
 executes that workflow body locally with synthetic first-gate results and the
 real final validator. It covers early and late failure, both expected files
 already present, final-gate rejection, nested shipping-helper failure, and a
-passing control. It never uploads or publishes packages.
+passing control. It also executes the actual primary/symbol publish command
+bodies through a native recording substitute. The primary command uses
+`--no-symbols`; the exact symbol artifact has its own command. The controls
+assert one submission per artifact and failure propagation for both commands,
+without duplicate masking. They never upload or publish packages.
 
 The package gate normalizes NuGet archive metadata before checking the exact
 archive allowlist. Release builds also normalize the generated managed PE
 `TimeDateStamp` field to zero before packaging. Reproducibility is claimed for
 the normalized shipping DLL/PDB bytes and normalized `.nupkg`/`.snupkg` entry
 names and bytes across clean checkout roots and repeated pack; raw ZIP
-container byte identity is not promised. The lock contract proves that the
+container byte identity is not promised. Clean reproducibility checkouts omit
+the physical icon and pack the unchanged canonical root asset by an explicit
+input path; no icon copy is created in a validation checkout. The lock contract proves that the
 committed graph restores in locked mode and that a mutated lock fails closed.
 
 The release contract check is intentionally expected to fail while the

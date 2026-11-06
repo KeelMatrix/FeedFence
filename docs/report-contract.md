@@ -18,7 +18,10 @@ properties:
   `packageSourceMappingEnabled`, `deterministicMappingCount`, and
   `diagnosticCount`.
 - `sources` — sorted safe source labels and normalized provenance labels; feed
-  URLs and source values are omitted.
+  URLs and source values are omitted. Each source includes `key`, `enabled`,
+  `provenance` and `repositoryControlled`. Repository control uses complete
+  physical ancestry for the config and repository boundary. Unresolved paths
+  have unknown inherited provenance and `repositoryControlled: false`.
 - `diagnostics` — ordered diagnostic objects. Each object contains `code`,
   `severity`, and `message`; a package diagnostic may additionally contain
   `packageId`, and a source-related diagnostic may additionally contain the
@@ -33,6 +36,13 @@ forms use the same required diagnostic fields and stable property order.
 JSON is intended for automation. Successful reports are written to stdout;
 invocation and analysis failures are written to stderr and do not mix progress
 text into the JSON document.
+
+Incomplete restore graphs/evaluated inputs and malformed solution membership
+produce exit `2` with no JSON/SARIF success document. Unknown winning mapping
+keys produce `FF004` and, when no configured enabled winner remains, `FF003`
+within a completed policy report (exit `1`). `FF006` covers enabled HTTP sources
+and disabled TLS certificate validation. These triggers use the version-1
+report shape and existing diagnostic identities.
 
 ## SARIF version 2.1.0
 

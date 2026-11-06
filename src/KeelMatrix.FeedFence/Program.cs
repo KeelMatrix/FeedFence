@@ -83,10 +83,15 @@ internal sealed record CliOptions(
             "Checks already-restored package IDs against effective NuGet source policy.",
             "Package IDs use NuGet's normal package-ID validation; unsafe or malformed identities fail closed.",
             "Declared dependency targets must use supported NuGet values and compatible assets records.",
+            "Requires the last restore's obj/<project-file-name>.nuget.dgspec.json evaluated inputs.",
+            "Incomplete dependency closure or solution membership fails with exit 2 and no partial report.",
+            "FF006 reports enabled HTTP sources and disabled TLS certificate validation.",
+            "Missing user settings without a packageSources clear require initialization or --config.",
             "FeedFence never restores packages or contacts package feeds during analysis.",
             "",
             "Options:",
             "  --config <path>  Use this NuGet configuration instead of hierarchy discovery.",
+            "                   NuGet's implicit machine defaults still apply and are bounded before parsing.",
             "  --policy <path>  Use this feedfence.json instead of the repository default.",
             "  --strict         Treat inherited active sources (FF005) as violations.",
             "  --format text|json|sarif",
@@ -242,7 +247,8 @@ internal sealed record SourceInfo(
     string Value,
     bool IsEnabled,
     string Provenance,
-    bool IsRepositoryControlled);
+    bool IsRepositoryControlled,
+    bool DisableTlsCertificateValidation = false);
 
 internal sealed record MappingPattern(string SourceKey, string Pattern);
 
@@ -252,7 +258,7 @@ internal sealed record MappingSelection(
 
 internal sealed record ProjectTarget(string RepositoryRoot, IReadOnlyList<string> ProjectPaths, string RestoreContext);
 
-internal sealed record MatchedPattern(MappingPattern Mapping, SourceInfo? Source, int Score);
+internal sealed record MatchedPattern(MappingPattern Mapping, int Score);
 
 internal static class InputLimits
 {

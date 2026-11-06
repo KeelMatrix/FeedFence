@@ -22,6 +22,7 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>
+    <FeedFencePackageIconPath Condition="'$(FeedFencePackageIconPath)' == ''">..\..\icon.png</FeedFencePackageIconPath>
     <RepositoryUrl>https://github.com/KeelMatrix/FeedFence</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageProjectUrl>https://github.com/KeelMatrix/FeedFence</PackageProjectUrl>
@@ -35,6 +36,6 @@
     <PackageReference Include="NuGet.Packaging" />
     <None Include="README.md" Pack="true" PackagePath="" />
     <None Include="..\..\LICENSE" Pack="true" PackagePath="" />
-    <None Include="..\..\icon.png" Pack="true" PackagePath="icon.png" Link="icon.png" />
+    <None Include="$(FeedFencePackageIconPath)" Pack="true" PackagePath="icon.png" Link="icon.png" />
   </ItemGroup>
 </Project>

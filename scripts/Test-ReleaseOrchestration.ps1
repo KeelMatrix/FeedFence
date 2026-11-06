@@ -140,6 +140,58 @@ if (Test-Path -LiteralPath variable:\LASTEXITCODE) { exit $LASTEXITCODE }
             Write-Output "Late-failure control: artifacts=$($artifacts.Count); standalone real final validator exit=$($finalControl.ExitCode)"
         }
     }
+    # Run the actual publish commands with a native substitute. It records the
+    # implicit adjacent-symbol behavior too, so duplicate submissions cannot hide.
+    $publishSteps = [regex]::Matches($workflow, '(?ms)^      - name: Push (?:symbols )?package to NuGet.org\r?\n        shell: pwsh\r?\n        run: >-\r?\n(?<body>.*?)(?=^      - name:|\z)')
+    if ($publishSteps.Count -ne 2) { throw 'Expected exact primary and symbol publication steps.' }
+    foreach ($failureAt in @('none', 'primary', 'symbols')) {
+        $fixture = Join-Path $testRoot "publish-$failureAt"
+        New-Item -ItemType Directory -Force -Path $fixture | Out-Null
+        Copy-Item -LiteralPath (Join-Path $repositoryRoot 'build/Invoke-NestedPwsh.ps1') -Destination $fixture
+        $logPath = Join-Path $fixture 'submissions.txt'
+        $stubPath = Join-Path $fixture 'dotnet-substitute.ps1'
+        $stub = @'
+param([Parameter(ValueFromRemainingArguments = $true)][string[]]$PushArguments)
+$ErrorActionPreference = 'Stop'
+if ($PushArguments[0] -ne 'nuget' -or $PushArguments[1] -ne 'push') { throw 'Unexpected substitute command.' }
+if ($PushArguments -contains '--skip-duplicate') { throw 'Duplicate masking is prohibited.' }
+$artifacts = @($PushArguments | Where-Object { $_ -match '\.(?:nupkg|snupkg)$' })
+if ($artifacts.Count -ne 1) { throw 'Expected exactly one immutable artifact per command.' }
+$artifact = [IO.Path]::GetFileName($artifacts[0])
+Add-Content -LiteralPath (Join-Path $PSScriptRoot 'submissions.txt') -Value $artifact
+if ($artifact.EndsWith('.nupkg') -and $PushArguments -notcontains '--no-symbols') {
+    Add-Content -LiteralPath (Join-Path $PSScriptRoot 'submissions.txt') -Value $artifact.Replace('.nupkg', '.snupkg')
+}
+'@
+        foreach ($stepIndex in 0..1) {
+            $command = ($publishSteps[$stepIndex].Groups['body'].Value -split '\r?\n' | Where-Object { $_ -match '\S' } | ForEach-Object { $_.Trim() }) -join ' '
+            $command = $command.Replace('${{ needs.verify.outputs.version }}', '0.1.0').Replace('${{ steps.nuget-login.outputs.NUGET_API_KEY }}', 'substitute-only')
+            $exitCode = if (($failureAt -eq 'primary' -and $stepIndex -eq 0) -or ($failureAt -eq 'symbols' -and $stepIndex -eq 1)) { 17 } else { 0 }
+            Set-Content -LiteralPath $stubPath -Value ($stub + "`nexit $exitCode`n")
+            $wrapper = @'
+$ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Invoke-NestedPwsh.ps1')
+function dotnet {
+    $forwardedArguments = @('-NoProfile', '-NonInteractive', '-File', (Join-Path $PSScriptRoot 'dotnet-substitute.ps1')) + $args
+    Invoke-NestedPwsh -ArgumentList $forwardedArguments
+}
+'@
+            $wrapper += "`n$command`n" + 'if (Test-Path -LiteralPath variable:\LASTEXITCODE) { exit $LASTEXITCODE }' + "`n"
+            $wrapperPath = Join-Path $fixture "publish-step-$stepIndex.ps1"
+            Set-Content -LiteralPath $wrapperPath -Value $wrapper
+            $result = Invoke-TestProcess $wrapperPath $fixture
+            if ($result.ExitCode -ne $exitCode) { $failures.Add("$failureAt step $stepIndex did not propagate exit $exitCode. $($result.Output)") }
+            # Match ordinary GitHub step success gating. A failed primary command
+            # must not reach the second command; a failed symbol command fails the job.
+            if ($result.ExitCode -ne 0) { break }
+        }
+        $submissions = @(Get-Content -LiteralPath $logPath)
+        $expected = @('KeelMatrix.FeedFence.0.1.0.nupkg')
+        if ($failureAt -ne 'primary') { $expected += 'KeelMatrix.FeedFence.0.1.0.snupkg' }
+        if (($submissions -join ',') -ne ($expected -join ',')) { $failures.Add("$failureAt submitted an unexpected or duplicate artifact: $($submissions -join ',')") }
+        if (($result.ExitCode -eq 0) -ne ($failureAt -eq 'none')) { $failures.Add("$failureAt publication result was incorrectly successful.") }
+        Write-Output "Publication substitute: failure=$failureAt; finalExit=$($result.ExitCode); submissions=$($submissions -join ',')"
+    }
     if ($failures.Count -ne 0) { throw ($failures -join "`n") }
     Write-Output 'PASS: actual release workflow stops after each rejected gate; nested shipping checks propagate failure and the positive control reaches downstream sentinels.'
 }

@@ -8,7 +8,12 @@ user-level NuGet configuration location for the host OS:
 - macOS: `~/.nuget/NuGet/NuGet.Config`
 
 The fixture also exercises an absolute `file://` local-feed URL, the host path
-separator, a case-sensitive mapping/source-key spelling, and deterministic JSON
+separator, case-only mapping/source-key differences, and deterministic JSON
 output. The script refuses to emulate another OS; run it on each target OS to
 produce platform evidence. It never restores the synthetic project or contacts
 a package feed.
+
+The synthetic graph includes an evaluated-input companion from
+`tests/Write-RestoreFixture.ps1`. Real restored graph, configuration and link
+controls run in `FeedFenceCliTests` and repeat against the installed tool in
+the package gate.

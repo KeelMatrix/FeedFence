@@ -6,6 +6,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $repositoryRoot 'tests/Write-RestoreFixture.ps1')
 . (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 $pwshExecutable = 'pwsh'
 $launchGuard = Join-Path $repositoryRoot 'build/Test-NestedPwshLaunch.ps1'
@@ -284,6 +285,7 @@ function New-ConsumerFixture([string]$Root, [string]$Name, [string[]]$SourceKeys
         }
     } | ConvertTo-Json -Depth 8 -Compress
     Set-Content -LiteralPath (Join-Path (Join-Path $projectDirectory 'obj') 'project.assets.json') -Encoding utf8 -Value $assets
+    Write-EvaluatedRestoreFixture $projectPath ($assets | ConvertFrom-Json -AsHashtable).project.frameworks
 
     $sources = foreach ($sourceKey in $SourceKeys) {
         $sourceDirectory = Join-Path $fixtureRoot (Join-Path 'feeds' $sourceKey)
@@ -340,6 +342,7 @@ function New-DependencyTargetFixture([string]$Root, [string]$Name, [string]$Depe
         }
     } | ConvertTo-Json -Depth 8 -Compress
     Set-Content -LiteralPath (Join-Path $objRoot 'project.assets.json') -Encoding utf8 -Value $assets
+    Write-EvaluatedRestoreFixture $projectPath ($assets | ConvertFrom-Json -AsHashtable).project.frameworks
     return $projectPath
 }
 
@@ -377,6 +380,7 @@ function Write-EquivalenceAssets([string]$ProjectPath, [string]$PackageId) {
         }
     } | ConvertTo-Json -Depth 8 -Compress
     Set-Content -LiteralPath (Join-Path (Join-Path (Split-Path -Parent $ProjectPath) 'obj') 'project.assets.json') -Encoding utf8 -Value $assets
+    Write-EvaluatedRestoreFixture $ProjectPath ($assets | ConvertFrom-Json -AsHashtable).project.frameworks
 }
 
 function Invoke-InstalledEquivalenceCases($ToolCommand, [string]$Root, [hashtable]$Environment) {
@@ -624,11 +628,11 @@ try {
     [xml]$projectDocument = Get-Content -Raw -LiteralPath $shippingProject
     $packageIcon = $projectDocument.SelectSingleNode("/*[local-name()='Project']/*[local-name()='PropertyGroup']/*[local-name()='PackageIcon']")
     Assert-Equal $packageIcon.InnerText 'icon.png' 'Project package icon metadata'
-    $iconPackItem = $projectDocument.SelectSingleNode("/*[local-name()='Project']/*[local-name()='ItemGroup']/*[local-name()='None'][@Include='..\..\icon.png']")
-    if ($null -eq $iconPackItem) { throw 'The shipping project does not resolve its package icon from the repository root.' }
-    Assert-Equal $iconPackItem.GetAttribute('Pack') 'true' 'Icon pack item'
-    Assert-Equal $iconPackItem.GetAttribute('PackagePath') 'icon.png' 'Icon package path'
-    $resolvedIconPath = [System.IO.Path]::GetFullPath((Join-Path $projectDirectory $iconPackItem.GetAttribute('Include')))
+    $evaluatedItems = & dotnet msbuild $shippingProject '-getItem:None'
+    if ($LASTEXITCODE -ne 0) { throw 'Could not evaluate package icon input paths.' }
+    $iconPackItems = @((($evaluatedItems -join "`n") | ConvertFrom-Json).Items.None | Where-Object { $_.Pack -eq 'true' -and $_.PackagePath -eq 'icon.png' })
+    Assert-Equal $iconPackItems.Count 1 'Exactly one evaluated icon pack input'
+    $resolvedIconPath = [System.IO.Path]::GetFullPath($iconPackItems[0].FullPath)
     Assert-Equal $resolvedIconPath ([System.IO.Path]::GetFullPath($iconPath)) 'Resolved icon path'
     & git -C $repositoryRoot ls-files --error-unmatch -- icon.png *> $null
     if ($LASTEXITCODE -ne 0) { throw 'The repository-root icon.png is not tracked.' }
@@ -736,6 +740,7 @@ try {
     $omittedDependencyProject = Join-Path $omittedDependencyRoot 'Fixture.csproj'
     Set-Content -LiteralPath $omittedDependencyProject -Encoding utf8 -Value '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Company.Secret" Version="1.0.0" /></ItemGroup></Project>'
     Set-Content -LiteralPath (Join-Path $omittedDependencyObj 'project.assets.json') -Encoding utf8 -Value '{"version":3,"targets":{"net8.0":{}},"libraries":{},"projectFileDependencyGroups":{"net8.0":["Company.Secret >= 1.0.0"]},"project":{"frameworks":{"net8.0":{"dependencies":{"Company.Secret":{"target":"Package","version":"[1.0.0, )"}}}}}}'
+    Write-EvaluatedRestoreFixture $omittedDependencyProject @{ 'net8.0' = @{ dependencies = @{ 'Company.Secret' = @{ target = 'Package'; version = '[1.0.0, )' } } } }
     $omittedDependencyResult = Invoke-Captured $toolCommand.FullName @('check', $omittedDependencyProject, '--config', $pass.Config, '--format', 'text') $consumerRoot $consumerEnvironment
     Assert-ConsumerResult $omittedDependencyResult 2 'omitted declared dependency mutation'
     if ($omittedDependencyResult.StandardError -notmatch 'declared dependency') { throw 'The installed omitted-dependency mutation did not explain the incomplete graph.' }
@@ -788,6 +793,7 @@ try {
             }
         } | ConvertTo-Json -Depth 8 -Compress
         Set-Content -LiteralPath (Join-Path $graphTypeObj 'project.assets.json') -Encoding utf8 -Value $graphTypeAssets
+        Write-EvaluatedRestoreFixture $graphTypeProject ($graphTypeAssets | ConvertFrom-Json -AsHashtable).project.frameworks
         $graphTypeResult = Invoke-Captured $toolCommand.FullName @('check', $graphTypeProject, '--config', $pass.Config, '--format', 'text') $consumerRoot $consumerEnvironment
         Assert-ConsumerResult $graphTypeResult 2 "$($graphTypeCase.Name) graph mutation"
         if ($graphTypeResult.StandardError -notmatch $graphTypeCase.Expected) { throw "The installed $($graphTypeCase.Name) mutation did not explain the inconsistent graph." }
@@ -811,6 +817,7 @@ try {
     $zeroPackageProject = Join-Path $zeroPackageRoot 'Fixture.csproj'
     Set-Content -LiteralPath $zeroPackageProject -Encoding utf8 -Value '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>'
     Set-Content -LiteralPath (Join-Path $zeroPackageObj 'project.assets.json') -Encoding utf8 -Value '{"version":3,"targets":{"net8.0":{}},"libraries":{},"projectFileDependencyGroups":{"net8.0":[]},"project":{"frameworks":{"net8.0":{}}}}'
+    Write-EvaluatedRestoreFixture $zeroPackageProject @{ 'net8.0' = @{} }
     $zeroPackageResult = Invoke-Captured $toolCommand.FullName @('check', $zeroPackageProject, '--config', $pass.Config, '--format', 'text') $consumerRoot $consumerEnvironment
     Assert-ConsumerResult $zeroPackageResult 0 'true zero-package control'
     if ($zeroPackageResult.StandardOutput -notmatch '0 resolved packages') { throw 'The installed zero-package control did not report an empty graph.' }
@@ -851,6 +858,10 @@ try {
     $dependencyIds = [regex]::Matches($nuspec, '<dependency\s+id="([^"]+)"') | ForEach-Object { $_.Groups[1].Value }
     if ($dependencyIds.Count -ne 0) { throw "Installed package has unexpected nuspec dependencies: $($dependencyIds -join ', ')" }
     Write-Output 'Consumer independence: PASS (isolated package cache/tool path, no source-repository path, no unpublished package dependency).'
+    $cliTests = Join-Path $repositoryRoot "tests/FeedFenceCliTests/bin/$Configuration/net8.0/KeelMatrix.FeedFence.CliTests.dll"
+    $installedFamilies = Invoke-Captured 'dotnet' @($cliTests, '--families-only', '--tool', $toolCommand.FullName) $consumerRoot $consumerEnvironment
+    Assert-ConsumerResult $installedFamilies 0 'installed real restore/input family regressions'
+    Write-Output $installedFamilies.StandardOutput
     Write-Output "PASS: exact artifacts inspected and consumed: $($expected -join ', ')."
 }
 finally {

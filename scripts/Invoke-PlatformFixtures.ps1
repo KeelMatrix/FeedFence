@@ -4,6 +4,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $repositoryRoot 'tests/Write-RestoreFixture.ps1')
 $toolDll = Join-Path (Join-Path (Join-Path (Join-Path (Join-Path $repositoryRoot 'src') 'KeelMatrix.FeedFence') 'bin') $Configuration) (Join-Path 'net8.0' 'KeelMatrix.FeedFence.dll')
 $fixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('feedfence-platform-' + [guid]::NewGuid().ToString('N'))
 
@@ -70,6 +71,7 @@ try {
         }
     } | ConvertTo-Json -Depth 8 -Compress
     Set-Content -LiteralPath (Join-Path (Join-Path $projectDirectory 'obj') 'project.assets.json') -Encoding utf8 -Value $assets
+    Write-EvaluatedRestoreFixture $projectPath ($assets | ConvertFrom-Json -AsHashtable).project.frameworks
     $fileUri = [Uri]::new($feedDirectory).AbsoluteUri
     Set-Content -LiteralPath $configPath -Encoding utf8 -Value "<configuration><packageSources><clear /><add key='LocalFeed' value='$fileUri' /></packageSources><packageSourceMapping><packageSource key='LocalFeed'><package pattern='Fixture.*' /></packageSource></packageSourceMapping></configuration>"
 

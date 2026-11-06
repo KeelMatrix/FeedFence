@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
 using NuGet.Configuration;
+using NuGet.Common;
 
 namespace KeelMatrix.FeedFence;
 
@@ -37,7 +38,7 @@ internal sealed class FeedFenceAnalyzer
                         SourceKeys: [source.Key]));
             }
 
-            if (IsInsecureHttpSource(source.Value))
+            if (IsInsecureHttpSource(source.Value) || source.DisableTlsCertificateValidation)
             {
                 AddDiagnostic(
                     diagnostics,
@@ -45,7 +46,7 @@ internal sealed class FeedFenceAnalyzer
                     new Diagnostic(
                         "FF006",
                         DiagnosticSeverity.Violation,
-                        $"Source key \"{RedactLabel(source.Key)}\" uses an insecure HTTP source; use HTTPS or a documented local exception.",
+                        $"Source key \"{RedactLabel(source.Key)}\" {(source.DisableTlsCertificateValidation ? "disables TLS certificate validation" : "uses an insecure HTTP source")}; use HTTPS with certificate validation or a documented narrow exception.",
                         SourceKeys: [source.Key]));
             }
         }
@@ -306,8 +307,10 @@ internal sealed class EffectiveConfig
     {
         try
         {
+            var missingUserConfig = false;
+            var hierarchyCount = 0;
             var configPaths = configPath is null
-                ? DiscoverHierarchyConfigPaths(restoreContext)
+                ? DiscoverHierarchyConfigPaths(restoreContext, out missingUserConfig, out hierarchyCount)
                 : [GetExplicitConfigPath(configPath)];
 
             foreach (var path in configPaths)
@@ -315,10 +318,25 @@ internal sealed class EffectiveConfig
                 ValidateXmlFile(path, InputLimits.MaxConfigBytes);
             }
 
+            // PackageSourceProvider also reads this implicit file, including for --config.
+            // Bound it before any access to ConfigurationDefaults.Instance can eagerly parse it.
+            var defaultsPath = Path.Combine(NuGetEnvironment.GetFolderPath(NuGetFolderPath.MachineWideSettingsBaseDirectory), "NuGetDefaults.Config");
+            if (File.Exists(defaultsPath))
+            {
+                ValidateXmlFile(defaultsPath, InputLimits.MaxConfigBytes);
+            }
+            if (missingUserConfig && !configPaths.Take(hierarchyCount).Any(ClearsPackageSources))
+            {
+                throw new AnalysisException("the user NuGet configuration is absent and NuGet may initialize default sources; initialize it with dotnet nuget list source, or supply --config. FeedFence cannot establish equivalent source settings without writing it.");
+            }
+
             using var settingsLoadingContext = new SettingsLoadingContext();
             var settings = Settings.LoadImmutableSettingsGivenConfigPaths(configPaths.ToList(), settingsLoadingContext);
 
             var packageSourceItems = settings.GetSection("packageSources")?.Items.OfType<SourceItem>().ToArray() ?? [];
+            var defaultSourceItems = File.Exists(defaultsPath)
+                ? Settings.LoadImmutableSettingsGivenConfigPaths([defaultsPath], settingsLoadingContext).GetSection("packageSources")?.Items.OfType<SourceItem>().ToArray() ?? []
+                : [];
             var loadedSources = new PackageSourceProvider(settings).LoadPackageSources().ToArray();
             if (loadedSources.Length > 256)
             {
@@ -329,15 +347,23 @@ internal sealed class EffectiveConfig
                 .Select(source =>
                 {
                     var sourceItem = packageSourceItems.FirstOrDefault(item =>
-                        string.Equals(item.Key, source.Name, StringComparison.OrdinalIgnoreCase));
-                    var configOrigin = sourceItem?.ConfigPath ?? string.Empty;
+                        string.Equals(item.Key, source.Name, StringComparison.OrdinalIgnoreCase))
+                        ?? defaultSourceItems.FirstOrDefault(item => string.Equals(item.Key, source.Name, StringComparison.OrdinalIgnoreCase));
+                    if (source.IsEnabled && sourceItem is not null &&
+                        ((!string.IsNullOrEmpty(sourceItem.DisableTLSCertificateValidation) && !bool.TryParse(sourceItem.DisableTLSCertificateValidation, out _)) ||
+                         (!string.IsNullOrEmpty(sourceItem.AllowInsecureConnections) && !bool.TryParse(sourceItem.AllowInsecureConnections, out _))))
+                    {
+                        throw new AnalysisException("an effective NuGet source security setting is not a supported boolean value.");
+                    }
+                    var configOrigin = sourceItem?.ConfigPath ?? (File.Exists(defaultsPath) ? defaultsPath : string.Empty);
                     var provenance = Provenance.Classify(configOrigin, repositoryRoot);
                     return new SourceInfo(
                         source.Name,
                         source.Source,
                         source.IsEnabled,
                         provenance.Label,
-                        provenance.IsRepositoryControlled);
+                        provenance.IsRepositoryControlled,
+                        source.DisableTLSCertificateValidation);
                 })
                 .OrderBy(source => source.Key, StringComparer.Ordinal)
                 .ToArray();
@@ -393,21 +419,8 @@ internal sealed class EffectiveConfig
                 .ToArray();
             var matchingPatterns = Mappings
                 .Where(mapping => PatternMatcher.Matches(mapping.Pattern, packageId))
-                .Select(mapping => new MatchedPattern(
-                    mapping,
-                    Sources.FirstOrDefault(source =>
-                        string.Equals(source.Key, mapping.SourceKey, StringComparison.OrdinalIgnoreCase)),
-                    PatternMatcher.Specificity(mapping.Pattern)))
-                .Where(item => item.Source is not null)
+                .Select(mapping => new MatchedPattern(mapping, PatternMatcher.Specificity(mapping.Pattern)))
                 .ToArray();
-
-            var winners = matchingPatterns.Length == 0
-                ? []
-                : matchingPatterns
-                    .Where(item => item.Score == matchingPatterns.Max(candidate => candidate.Score))
-                    .Select(item => item.Source!)
-                    .DistinctBy(source => source.Key, StringComparer.OrdinalIgnoreCase)
-                    .ToArray();
             var winningPatterns = matchingPatterns.Length == 0
                 ? []
                 : matchingPatterns
@@ -417,14 +430,9 @@ internal sealed class EffectiveConfig
                     .Order(StringComparer.Ordinal)
                     .ToArray();
 
-            var configuredSet = configuredSources.Select(source => source.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var winnerSet = winners.Select(source => source.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (!configuredSet.SetEquals(winnerSet))
-            {
-                throw new AnalysisException("NuGet Package Source Mapping returned an eligibility set that could not be reconciled with its documented specificity rules.");
-            }
-
-            return new(winners.Where(source => source.IsEnabled).OrderBy(source => source.Key, StringComparer.Ordinal).ToArray(), winningPatterns);
+            // NuGet selects across the full mapping set. Source existence/enabled state
+            // may only remove winners; it must never promote a less-specific mapping.
+            return new(configuredSources.Where(source => source.IsEnabled).OrderBy(source => source.Key, StringComparer.Ordinal).ToArray(), winningPatterns);
         }
         catch (AnalysisException)
         {
@@ -495,7 +503,14 @@ internal sealed class EffectiveConfig
         return fullConfigPath;
     }
 
-    private static string[] DiscoverHierarchyConfigPaths(string restoreContext)
+    private static bool ClearsPackageSources(string path)
+    {
+        // All paths have already passed the streaming XML budgets and DTD prohibition.
+        var document = XDocument.Load(path);
+        return document.Root?.Elements("packageSources").Elements("clear").Any() == true;
+    }
+
+    private static string[] DiscoverHierarchyConfigPaths(string restoreContext, out bool missingUserConfig, out int hierarchyCount)
     {
         var paths = new List<string>();
         var comparer = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
@@ -522,30 +537,33 @@ internal sealed class EffectiveConfig
             current = parent.FullName;
         }
 
-        var userSettingsDirectory = GetUserSettingsDirectory();
+        hierarchyCount = paths.Count;
+        missingUserConfig = false;
+        var userSettingsDirectory = NuGetEnvironment.GetFolderPath(NuGetFolderPath.UserSettingsDirectory);
         if (userSettingsDirectory is not null)
         {
-            AddIfFileExists(paths, Path.Combine(userSettingsDirectory, Settings.DefaultSettingsFileName));
+            var userConfig = Path.Combine(userSettingsDirectory, Settings.DefaultSettingsFileName);
+            missingUserConfig = !File.Exists(userConfig);
+            AddIfFileExists(paths, userConfig);
             var additionalDirectory = Path.Combine(userSettingsDirectory, "config");
             if (Directory.Exists(additionalDirectory))
             {
-                foreach (var pattern in Settings.SupportedMachineWideConfigExtension)
-                {
-                    paths.AddRange(Directory.EnumerateFiles(additionalDirectory, pattern, SearchOption.TopDirectoryOnly)
-                        .Where(path => !comparer.Equals(Path.GetFileName(path), Settings.DefaultSettingsFileName))
-                        .Order(comparer));
-                }
+                paths.AddRange(Settings.SupportedMachineWideConfigExtension
+                    .SelectMany(pattern => Directory.EnumerateFiles(additionalDirectory, pattern, SearchOption.TopDirectoryOnly))
+                    .Where(path => !comparer.Equals(Path.GetFileName(path), Settings.DefaultSettingsFileName))
+                    .Distinct(comparer).Order(comparer));
             }
         }
 
-        var machineConfigDirectory = GetMachineConfigDirectory();
+        var machineConfigDirectory = NuGetEnvironment.GetFolderPath(NuGetFolderPath.MachineWideConfigDirectory);
         if (machineConfigDirectory is not null && Directory.Exists(machineConfigDirectory))
         {
-            foreach (var pattern in Settings.SupportedMachineWideConfigExtension)
+            foreach (var path in Settings.SupportedMachineWideConfigExtension
+                .SelectMany(pattern => Directory.EnumerateFiles(machineConfigDirectory, pattern, SearchOption.TopDirectoryOnly)).Distinct(comparer))
             {
-                paths.AddRange(Directory.EnumerateFiles(machineConfigDirectory, pattern, SearchOption.TopDirectoryOnly)
-                    .Order(comparer));
+                ValidateXmlFile(path, InputLimits.MaxConfigBytes);
             }
+            paths.AddRange(Settings.LoadMachineWideSettings(machineConfigDirectory).GetConfigFilePaths());
         }
 
         return paths.Distinct(comparer).ToArray();
@@ -559,55 +577,6 @@ internal sealed class EffectiveConfig
         }
     }
 
-    private static string? GetUserSettingsDirectory()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            var appData = Environment.GetEnvironmentVariable("APPDATA");
-            if (string.IsNullOrWhiteSpace(appData))
-            {
-                appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            }
-
-            return string.IsNullOrWhiteSpace(appData) ? null : Path.Combine(appData, "NuGet");
-        }
-
-        var home = Environment.GetEnvironmentVariable("DOTNET_CLI_HOME");
-        if (string.IsNullOrWhiteSpace(home))
-        {
-            home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        }
-
-        return string.IsNullOrWhiteSpace(home) ? null : Path.Combine(home, ".nuget", "NuGet");
-    }
-
-    private static string? GetMachineConfigDirectory()
-    {
-        string? root;
-        var commonApplicationData = Environment.GetEnvironmentVariable("NUGET_COMMON_APPLICATION_DATA");
-        if (!string.IsNullOrWhiteSpace(commonApplicationData) && !OperatingSystem.IsWindows())
-        {
-            root = commonApplicationData;
-        }
-        else if (OperatingSystem.IsWindows())
-        {
-            root = Environment.GetEnvironmentVariable("PROGRAMFILES(X86)");
-            if (string.IsNullOrWhiteSpace(root))
-            {
-                root = Environment.GetEnvironmentVariable("PROGRAMFILES");
-            }
-        }
-        else if (OperatingSystem.IsMacOS())
-        {
-            root = "/Library/Application Support";
-        }
-        else
-        {
-            root = "/etc/opt";
-        }
-
-        return string.IsNullOrWhiteSpace(root) ? null : Path.Combine(root, "NuGet", "Config");
-    }
 }
 
 internal static class Provenance
@@ -620,19 +589,24 @@ internal static class Provenance
         }
 
         var fullConfigPath = ResolvePhysicalPath(configPath);
-        if (IsWithinDirectory(fullConfigPath, ResolvePhysicalPath(repositoryRoot)))
+        var physicalRoot = ResolvePhysicalPath(repositoryRoot);
+        if (fullConfigPath is null || physicalRoot is null)
+        {
+            return ("unknown inherited configuration (physical path could not be resolved)", false);
+        }
+        if (IsWithinDirectory(fullConfigPath, physicalRoot))
         {
             return ("repository-controlled configuration", true);
         }
 
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        if (!string.IsNullOrWhiteSpace(appData) && IsWithinDirectory(fullConfigPath, ResolvePhysicalPath(appData)))
+        if (!string.IsNullOrWhiteSpace(appData) && ResolvePhysicalPath(appData) is { } physicalAppData && IsWithinDirectory(fullConfigPath, physicalAppData))
         {
             return ("user-inherited configuration", false);
         }
 
         var commonData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
-        if (!string.IsNullOrWhiteSpace(commonData) && IsWithinDirectory(fullConfigPath, ResolvePhysicalPath(commonData)))
+        if (!string.IsNullOrWhiteSpace(commonData) && ResolvePhysicalPath(commonData) is { } physicalCommonData && IsWithinDirectory(fullConfigPath, physicalCommonData))
         {
             return ("machine-inherited configuration", false);
         }
@@ -650,32 +624,46 @@ internal static class Provenance
              !relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal));
     }
 
-    private static string ResolvePhysicalPath(string path)
+    internal static string? ResolvePhysicalPath(string path)
     {
         try
         {
             var fullPath = Path.GetFullPath(path);
-            var file = new FileInfo(fullPath);
-            var fileTarget = file.ResolveLinkTarget(returnFinalTarget: true);
-            if (fileTarget is not null)
+            var seen = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+            for (var hops = 0; hops < 64 && seen.Add(fullPath); hops++)
             {
-                return Path.GetFullPath(fileTarget.FullName);
+                var root = Path.GetPathRoot(fullPath)!;
+                var parts = fullPath[root.Length..].Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
+                var resolved = root;
+                var redirected = false;
+                for (var index = 0; index < parts.Length; index++)
+                {
+                    resolved = Path.Combine(resolved, parts[index]);
+                    var attributes = File.GetAttributes(resolved);
+                    if ((attributes & FileAttributes.ReparsePoint) == 0)
+                    {
+                        continue;
+                    }
+                    FileSystemInfo entry = (attributes & FileAttributes.Directory) != 0 ? new DirectoryInfo(resolved) : new FileInfo(resolved);
+                    var target = entry.ResolveLinkTarget(returnFinalTarget: false);
+                    if (target is null)
+                    {
+                        return null;
+                    }
+                    fullPath = Path.GetFullPath(Path.Combine([target.FullName, .. parts[(index + 1)..]]));
+                    redirected = true;
+                    break;
+                }
+                if (!redirected)
+                {
+                    return resolved;
+                }
             }
-
-            var parent = file.Directory;
-            if (parent is null)
-            {
-                return fullPath;
-            }
-
-            var parentTarget = parent.ResolveLinkTarget(returnFinalTarget: true);
-            return parentTarget is null
-                ? fullPath
-                : Path.Combine(Path.GetFullPath(parentTarget.FullName), file.Name);
+            return null;
         }
         catch
         {
-            return Path.GetFullPath(path);
+            return null;
         }
     }
 }
@@ -718,7 +706,7 @@ internal static class TargetResolver
 {
     private const string SolutionFolderProjectType = "2150E333-8FDC-42A3-9474-1A3956D46DE8";
     private static readonly Regex SolutionProjectLine = new(
-        "^Project\\(\"\\{(?<type>[^}]+)\\}\"\\)\\s*=\\s*\"[^\"]+\",\\s*\"(?<path>[^\"]+)\"",
+        "^Project\\(\"\\{(?<type>[0-9A-F-]{36})\\}\"\\)\\s*=\\s*\"[^\"]+\",\\s*\"(?<path>[^\"]+)\",\\s*\"\\{(?<id>[0-9A-F-]{36})\\}\"\\s*$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
     private static readonly HashSet<string> SupportedProjectExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -799,15 +787,14 @@ internal static class TargetResolver
 
     private static ProjectTarget ResolveSolution(string solutionPath)
     {
+        if (new FileInfo(solutionPath).Length > InputLimits.MaxSolutionBytes)
+        {
+            throw new InvocationException("the supplied solution exceeds the supported input size.");
+        }
         var solutionDirectory = Path.GetDirectoryName(solutionPath)!;
         var declaredProjects = Path.GetExtension(solutionPath).Equals(".slnx", StringComparison.OrdinalIgnoreCase)
             ? ReadSlnxProjects(solutionPath, solutionDirectory)
-            : File.ReadLines(solutionPath)
-                .Select(line => SolutionProjectLine.Match(line))
-                .Where(match => match.Success)
-                .Where(match => !string.Equals(match.Groups["type"].Value, SolutionFolderProjectType, StringComparison.OrdinalIgnoreCase))
-                .Select(match => Path.GetFullPath(Path.Combine(solutionDirectory, match.Groups["path"].Value.Replace('\\', Path.DirectorySeparatorChar))))
-                .ToArray();
+            : ReadSlnProjects(solutionPath, solutionDirectory);
 
         if (declaredProjects.Any(path => !SupportedProjectExtensions.Contains(Path.GetExtension(path))))
         {
@@ -827,6 +814,45 @@ internal static class TargetResolver
         return new(FindRepositoryRoot(solutionDirectory), declaredProjects, solutionDirectory);
     }
 
+    private static string[] ReadSlnProjects(string solutionPath, string solutionDirectory)
+    {
+        var projects = new List<string>();
+        var inProject = false;
+        foreach (var rawLine in File.ReadLines(solutionPath))
+        {
+            var line = rawLine.Trim();
+            if (line.Equals("EndProject", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!inProject)
+                {
+                    throw new InvocationException("the supplied solution contains an unmatched project terminator.");
+                }
+                inProject = false;
+                continue;
+            }
+            if (!line.StartsWith("Project", StringComparison.OrdinalIgnoreCase) || line.StartsWith("ProjectSection(", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            var match = SolutionProjectLine.Match(line);
+            if (inProject || !match.Success || !Guid.TryParse(match.Groups["type"].Value, out _) || !Guid.TryParse(match.Groups["id"].Value, out _) ||
+                string.IsNullOrWhiteSpace(match.Groups["path"].Value))
+            {
+                throw new InvocationException("the supplied solution contains a malformed or unsupported project declaration.");
+            }
+            inProject = true;
+            if (!string.Equals(match.Groups["type"].Value, SolutionFolderProjectType, StringComparison.OrdinalIgnoreCase))
+            {
+                projects.Add(Path.GetFullPath(Path.Combine(solutionDirectory, match.Groups["path"].Value.Replace('\\', Path.DirectorySeparatorChar))));
+            }
+        }
+        if (inProject)
+        {
+            throw new InvocationException("the supplied solution contains an unterminated project declaration.");
+        }
+        return projects.ToArray();
+    }
+
     private static string[] ReadSlnxProjects(string solutionPath, string solutionDirectory)
     {
         try
@@ -839,12 +865,19 @@ internal static class TargetResolver
             };
             using var reader = XmlReader.Create(solutionPath, settings);
             var document = XDocument.Load(reader, LoadOptions.None);
+            if (document.Root?.Name != "Solution")
+            {
+                throw new InvocationException("the supplied solution has an unsupported root element.");
+            }
             return document
                 .Descendants()
-                .Where(element => string.Equals(element.Name.LocalName, "Project", StringComparison.Ordinal))
-                .Select(element => element.Attribute("Path")?.Value)
-                .Where(path => !string.IsNullOrWhiteSpace(path))
-                .Select(path => Path.GetFullPath(Path.Combine(solutionDirectory, path!.Replace('\\', Path.DirectorySeparatorChar))))
+                .Where(element => string.Equals(element.Name.LocalName, "Project", StringComparison.OrdinalIgnoreCase))
+                .Select(element => element.Name != "Project"
+                    ? throw new InvocationException("the supplied solution contains an unsupported project declaration.")
+                    : element.Attribute("Path")?.Value)
+                .Select(path => string.IsNullOrWhiteSpace(path)
+                    ? throw new InvocationException("the supplied solution contains a project declaration with a missing or blank Path.")
+                    : Path.GetFullPath(Path.Combine(solutionDirectory, path.Replace('\\', Path.DirectorySeparatorChar))))
                 .ToArray();
         }
         catch (InvocationException)

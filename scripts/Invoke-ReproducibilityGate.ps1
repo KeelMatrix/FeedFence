@@ -127,7 +127,8 @@ function Pack-CleanClone([string]$ClonePath, [string]$Label) {
     $output = Join-Path $ClonePath 'repro-artifacts'
     New-Item -ItemType Directory -Force -Path $output | Out-Null
     Write-Output "[$Label] deterministic pack"
-    Invoke-Checked 'dotnet' @('pack', (Join-Path $ClonePath 'src/KeelMatrix.FeedFence/KeelMatrix.FeedFence.csproj'), '-c', $Configuration, '--no-restore', "-p:PackageVersion=$PackageVersion", '--output', $output) $ClonePath
+    $canonicalIcon = Join-Path $repositoryRoot 'icon.png'
+    Invoke-Checked 'dotnet' @('pack', (Join-Path $ClonePath 'src/KeelMatrix.FeedFence/KeelMatrix.FeedFence.csproj'), '-c', $Configuration, '--no-restore', "-p:PackageVersion=$PackageVersion", "-p:FeedFencePackageIconPath=$canonicalIcon", '--output', $output) $ClonePath
 
     $nupkg = Join-Path $output "KeelMatrix.FeedFence.$PackageVersion.nupkg"
     $snupkg = Join-Path $output "KeelMatrix.FeedFence.$PackageVersion.snupkg"
@@ -159,8 +160,14 @@ try {
     New-Item -ItemType Directory -Force -Path $scratchRoot | Out-Null
     $shortRoot = Join-Path $scratchRoot 'a'
     $longRoot = Join-Path $scratchRoot 'b-long'
-    Invoke-Checked 'git' @('clone', '--quiet', '--no-local', $repositoryRoot, $shortRoot) $scratchRoot
-    Invoke-Checked 'git' @('clone', '--quiet', '--no-local', $repositoryRoot, $longRoot) $scratchRoot
+    foreach ($clonePath in @($shortRoot, $longRoot)) {
+        Invoke-Checked 'git' @('clone', '--quiet', '--no-local', '--no-checkout', $repositoryRoot, $clonePath) $scratchRoot
+        Invoke-Checked 'git' @('config', 'core.sparseCheckout', 'true') $clonePath
+        Invoke-Checked 'git' @('config', 'core.sparseCheckoutCone', 'false') $clonePath
+        Set-Content -LiteralPath (Join-Path $clonePath '.git/info/sparse-checkout') -Value @('/*', '!/icon.png')
+        Invoke-Checked 'git' @('checkout', '--quiet', $candidateSha) $clonePath
+        if (Test-Path -LiteralPath (Join-Path $clonePath 'icon.png')) { throw 'Reproducibility checkout must not materialize the icon.' }
+    }
 
     $first = Pack-CleanClone $shortRoot 'short-root first run'
     $second = Pack-CleanClone $longRoot 'long-root first run'
