@@ -11,11 +11,15 @@ namespace KeelMatrix.FeedFence.Phase0Probe;
 
 internal static class Program
 {
-    public static int Main()
+    public static int Main(string[] args)
     {
         try
         {
-            return new ProbeRunner().Run();
+            if (args.Any(argument => argument != "--machine-in-user-layer"))
+            {
+                throw new ArgumentException("Unknown probe argument.");
+            }
+            return new ProbeRunner(args.Contains("--machine-in-user-layer", StringComparer.Ordinal)).Run();
         }
         catch (Exception exception)
         {
@@ -29,8 +33,14 @@ internal sealed class ProbeRunner
 {
     private readonly List<string> _failures = [];
     private readonly List<string> _observations = [];
+    private readonly bool _machineFixtureInUserLayer;
     private string _runRoot = string.Empty;
     private string _shippingTool = string.Empty;
+
+    public ProbeRunner(bool machineFixtureInUserLayer)
+    {
+        _machineFixtureInUserLayer = OperatingSystem.IsMacOS() || machineFixtureInUserLayer;
+    }
 
     public int Run()
     {
@@ -61,8 +71,12 @@ internal sealed class ProbeRunner
             Console.WriteLine("FeedFence Phase 0 feasibility probe");
             Console.WriteLine("NuGet.Configuration: 7.9.0");
             Console.WriteLine("Restore mode: synthetic local file feeds only; network-capable sources and credential-provider paths are absent.");
+            Console.WriteLine(_machineFixtureInUserLayer
+                ? "SDK fixture layer: additional user config; the injected machine API is checked separately without host machine writes."
+                : "SDK fixture layer: redirected native machine config; injected machine API checked separately.");
             Console.WriteLine();
 
+            RunInjectedMachineControl(runRoot);
             RunHierarchyCases(runRoot);
             RunClearCase(runRoot);
             RunNoMappingCase(runRoot);
@@ -122,8 +136,8 @@ internal sealed class ProbeRunner
             "hierarchy mapping is enabled",
             effective.MappingEnabled);
         Assert(
-            "machine source provenance",
-            effective.Sources.Single(source => source.Name == "Machine").Scope == "machine");
+            "machine fixture source provenance matches its SDK-visible layer",
+            effective.Sources.Single(source => source.Name == "Machine").Scope == (_machineFixtureInUserLayer ? "user" : "machine"));
         Assert(
             "user source provenance",
             effective.Sources.Single(source => source.Name == "User").Scope == "user");
@@ -273,6 +287,7 @@ internal sealed class ProbeRunner
         {
             Assert($"{name} restored package is present", resolvedIds.Contains(packageId, StringComparer.OrdinalIgnoreCase));
             Assert($"{name} selected source marker is eligible", selectedMarker is not null && expectedCandidates.Contains(selectedMarker, StringComparer.OrdinalIgnoreCase));
+            AssertSdkSourceInputs(name, projectPath, effective);
         }
 
         var actualEligible = ProbeActualEligibleSources(runRoot, name, repositoryRoot, packageId, effective, expectedCandidates, configPath);
@@ -491,6 +506,7 @@ internal sealed class ProbeRunner
             packageRoot,
             "--force",
             "--no-cache",
+            "--disable-build-servers",
             "--disable-parallel",
             "--verbosity",
             "minimal"
@@ -600,6 +616,29 @@ internal sealed class ProbeRunner
             }
         };
         File.WriteAllText(Path.Combine(objDirectory, "project.assets.json"), JsonSerializer.Serialize(assets), new UTF8Encoding(false));
+    }
+
+    private void AssertSdkSourceInputs(string name, string projectPath, EffectiveConfig effective)
+    {
+        using var document = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(projectPath)!, "obj", "project.assets.json")));
+        var sources = document.RootElement.GetProperty("project").GetProperty("restore").GetProperty("sources");
+        var actualPaths = sources.EnumerateObject().Select(source => NormalizeLocalSource(source.Name))
+            .ToHashSet(OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        var expectedPaths = effective.Sources.Where(source => source.IsEnabled).Select(source => NormalizeLocalSource(source.Source));
+        if (!actualPaths.SetEquals(expectedPaths))
+        {
+            Console.WriteLine($"  SDK input mismatch: actual=[{string.Join(", ", actualPaths.Select(path => path.Replace(_runRoot, "<fixture-root>", StringComparison.OrdinalIgnoreCase)))}]; modeled=[{string.Join(", ", expectedPaths.Select(path => path.Replace(_runRoot, "<fixture-root>", StringComparison.OrdinalIgnoreCase)))}]");
+        }
+        Assert($"{name} SDK source inputs equal the modeled active sources before isolation controls", actualPaths.SetEquals(expectedPaths));
+
+        static string NormalizeLocalSource(string source)
+        {
+            if (Uri.TryCreate(source, UriKind.Absolute, out var uri))
+            {
+                return uri.IsFile ? Path.TrimEndingDirectorySeparator(Path.GetFullPath(uri.LocalPath)) : uri.AbsoluteUri;
+            }
+            return Path.TrimEndingDirectorySeparator(Path.GetFullPath(source));
+        }
     }
 
     private static ISettings LoadHierarchySettings(string repositoryRoot, string runRoot)
@@ -777,7 +816,21 @@ internal sealed class ProbeRunner
         }
     }
 
-    private static void InstallScopeTemplates(string runRoot)
+    private void RunInjectedMachineControl(string runRoot)
+    {
+        var settings = Settings.LoadMachineWideSettings(Path.Combine(runRoot, "machine-common"), "NuGet", "Config");
+        var effective = Describe(settings, Path.Combine(runRoot, "hierarchy", "repository"));
+        AssertSet("injected machine API active source", effective.Sources.Where(source => source.IsEnabled).Select(source => source.Name), ["Machine"]);
+        Assert("injected machine API disabled source", !effective.Sources.Single(source => source.Name == "DisabledMachine").IsEnabled);
+        Assert("injected machine API provenance", effective.Sources.Single(source => source.Name == "Machine").Scope == "machine");
+        _observations.Add("machine API: explicit isolated machine settings preserve active/disabled values and ConfigPath provenance on every OS");
+        if (_machineFixtureInUserLayer)
+        {
+            _observations.Add("SDK fixture placement: machine-named sources use additional user configuration because macOS NuGet does not redirect its machine directory; all source/mapping/restore assertions remain enabled");
+        }
+    }
+
+    private void InstallScopeTemplates(string runRoot)
     {
         var userConfig = Path.Combine(runRoot, "user-appdata", "NuGet", "NuGet.Config");
         Directory.CreateDirectory(Path.GetDirectoryName(userConfig)!);
@@ -794,6 +847,15 @@ internal sealed class ProbeRunner
         var machineConfig = Path.Combine(runRoot, "machine-common", "NuGet", "Config", "NuGet.Config");
         Directory.CreateDirectory(Path.GetDirectoryName(machineConfig)!);
         File.Copy(Path.Combine(runRoot, "hierarchy", "machine", "NuGet.Config"), machineConfig, overwrite: true);
+        if (_machineFixtureInUserLayer)
+        {
+            foreach (var primaryConfig in new[] { userConfig, unixUserConfig, dotnetUserConfig })
+            {
+                var additional = Path.Combine(Path.GetDirectoryName(primaryConfig)!, "config", "MachineFixture.config");
+                Directory.CreateDirectory(Path.GetDirectoryName(additional)!);
+                File.Copy(machineConfig, additional, overwrite: true);
+            }
+        }
     }
 
     private static void PrepareFeeds(string runRoot)
@@ -839,7 +901,7 @@ internal sealed class ProbeRunner
     private static void WriteRestoreProject(string path, string packageId)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, $"<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework><RestoreProjectStyle>PackageReference</RestoreProjectStyle></PropertyGroup><ItemGroup><PackageReference Include=\"{packageId}\" Version=\"1.0.0\" /></ItemGroup></Project>", new UTF8Encoding(false));
+        File.WriteAllText(path, $"<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework><RestoreProjectStyle>PackageReference</RestoreProjectStyle><DisableImplicitLibraryPacksFolder>true</DisableImplicitLibraryPacksFolder></PropertyGroup><ItemGroup><PackageReference Include=\"{packageId}\" Version=\"1.0.0\" /></ItemGroup></Project>", new UTF8Encoding(false));
     }
 
     private static HashSet<string> ReadResolvedPackageIds(string assetsPath)

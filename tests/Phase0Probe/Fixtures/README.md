@@ -19,3 +19,10 @@ synthetic local file feeds and configuration values.
 Every generated package also contains `feedfence-origin.txt`, whose content is
 the feed marker. The probe reads it after restore to independently identify the
 source that supplied the package.
+
+Machine settings have an isolated official-API control on every OS. For actual
+SDK restores, macOS places the machine-named fixtures in additional user config
+because NuGet's machine directory cannot be redirected there. The probe asserts
+the resulting user provenance and retains all mapping/restore controls; it does
+not write host machine settings. Windows/Linux retain native redirected-machine
+coverage. See the [probe guide](../README.md) for the explicit placement switch.

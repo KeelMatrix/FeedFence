@@ -46,6 +46,9 @@ dotnet format KeelMatrix.FeedFence.sln --verify-no-changes --no-restore
 The platform fixture runs the same artifact against the current OS. The Phase 0
 probe and package gate use synthetic/offline fixtures where specified; neither
 should be changed to contact a real package feed during analysis.
+The [probe guide](../tests/Phase0Probe/README.md) distinguishes native machine
+directory redirection from the macOS additional-user fixture placement and its
+separate injected-machine API control. Both retain the same behavioral assertions.
 
 The [repository hygiene check](../scripts/Invoke-RepoHygiene.ps1) owns the exact
 commit identity allowlists, including the KeelMatrix account's GitHub ID-based
