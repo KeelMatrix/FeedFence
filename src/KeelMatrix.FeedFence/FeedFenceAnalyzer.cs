@@ -320,7 +320,7 @@ internal sealed class EffectiveConfig
 
             // PackageSourceProvider also reads this implicit file, including for --config.
             // Bound it before any access to ConfigurationDefaults.Instance can eagerly parse it.
-            var defaultsPath = Path.Combine(NuGetEnvironment.GetFolderPath(NuGetFolderPath.MachineWideSettingsBaseDirectory), "NuGetDefaults.Config");
+            var defaultsPath = Path.Combine(NuGetEnvironment.GetFolderPath(NuGetFolderPath.MachineWideSettingsBaseDirectory), ConfigurationConstants.ConfigurationDefaultsFile);
             if (File.Exists(defaultsPath))
             {
                 ValidateXmlFile(defaultsPath, InputLimits.MaxConfigBytes);

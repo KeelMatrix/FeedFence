@@ -37,7 +37,7 @@ The optional repository-root `feedfence.json` supports source trust labels, prot
 
 The tool targets `net8.0`, has no supported in-process API in v1, and makes no analysis-time network or credential-provider calls. Package Source Mapping limits package downloads, not every NuGet metadata query; `FF008` is informational only.
 
-Configuration and restore inputs are bounded. Assets schemas `3`/`4`, lock schemas `1`/`2`, and evaluated input schema `1` are supported. Assets and evaluated inputs are limited to 32 MiB each; locks to 8 MiB. Graph limits are 50,000 libraries/resolved packages, 256 frameworks and 100,000 target-library/dependency-edge references. Evaluated inputs permit 4,096 projects and 128 nested project references. Required framework containers remain nonempty for zero-package restores. Dependency targets use supported NuGet names/flag combinations and compatible record types. All NuGet configuration inputs, including `NuGetDefaults.Config`, are checked before eager parsing against 2 MiB, XML depth 64 and 100,000 elements; DTD/external entity processing is disabled.
+Configuration and restore inputs are bounded. Assets schemas `3`/`4`, lock schemas `1`/`2`, and evaluated input schema `1` are supported. Assets and evaluated inputs are limited to 32 MiB each; locks to 8 MiB. Graph limits are 50,000 libraries/resolved packages, 256 frameworks and 100,000 target-library/dependency-edge references. Evaluated inputs permit 4,096 projects and 128 nested project references. Required framework containers remain nonempty for zero-package restores. Dependency targets use supported NuGet names/flag combinations and compatible record types. All NuGet configuration inputs, including `NuGetDefaults.config`, are checked before eager parsing against 2 MiB, XML depth 64 and 100,000 elements; DTD/external entity processing is disabled.
 
 NuGet configuration is hierarchical and `<clear />` resets a collection. Exact
 mapping IDs beat the longest prefix, which beats `*`; equal winners produce
@@ -46,7 +46,7 @@ prove repository-owned deterministic policy.
 
 Unknown or disabled winning mapping keys cannot promote less-specific patterns: unknown keys produce `FF004`, and no eligible source produces `FF003`. `FF006` reports enabled HTTP sources and HTTPS sources that disable TLS certificate validation; normal HTTPS/local feeds pass, and narrow exceptions require a target and reason. Repository provenance resolves complete path ancestry, including links and junctions; unresolved paths are uncontrolled.
 
-Analysis never creates a missing user configuration. If no repository/path `packageSources` clear removes possible user defaults, an absent user file produces exit `2`. Initialize it with `dotnet nuget list source` or use `--config`. Machine `NuGetDefaults.Config` still applies even with an explicit config or clear. Additional user `.config`/`.Config` files share NuGet's combined ordering.
+Analysis never creates a missing user configuration. If no repository/path `packageSources` clear removes possible user defaults, an absent user file produces exit `2`. Initialize it with `dotnet nuget list source` or use `--config`. Machine `NuGetDefaults.config` still applies even with an explicit config or clear. Additional user `.config`/`.Config` files share NuGet's combined ordering.
 
 The optional policy schema supports `version: 1`, `sourceTrust`,
 `protectedPackages`, `privatePackages`, and `exceptions`. Every exception needs

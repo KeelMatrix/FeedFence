@@ -85,7 +85,7 @@ Mapping selection follows NuGet specificity across the complete mapping set: exa
 
 NuGet combines repository, user, and computer-wide configuration. `<clear />` resets the relevant collection before repository entries are added.
 
-Additional user `.config` and `.Config` files are ordered as one combined set. Analysis never creates a missing user configuration. If it is absent and repository/path configuration does not clear package sources, FeedFence exits `2` because NuGet can initialize default sources. Run `dotnet nuget list source` yourself to initialize it, or supply `--config`. A repository `<packageSources><clear /></packageSources>` permits read-only analysis without that user file. The separate `NuGetDefaults.Config` input remains applicable even with `<clear />` or `--config` and is bounded before NuGet parses it.
+Additional user `.config` and `.Config` files are ordered as one combined set. Analysis never creates a missing user configuration. If it is absent and repository/path configuration does not clear package sources, FeedFence exits `2` because NuGet can initialize default sources. Run `dotnet nuget list source` yourself to initialize it, or supply `--config`. A repository `<packageSources><clear /></packageSources>` permits read-only analysis without that user file. The separate `NuGetDefaults.config` input remains applicable even with `<clear />` or `--config` and is bounded before NuGet parses it.
 
 Repository control uses the complete physical ancestry of both the source configuration and repository root, including symbolic links and junctions. An unresolved physical path is reported as uncontrolled, never accepted from its spelling alone.
 

@@ -4,6 +4,7 @@ using System.Security;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using NuGet.Configuration;
 
 namespace KeelMatrix.FeedFence.CliTests;
 
@@ -324,7 +325,7 @@ internal sealed class RestoreInputCases : IDisposable
 
         if (!OperatingSystem.IsMacOS())
         {
-            var defaults = Path.Combine(_machineBase, "NuGetDefaults.Config");
+            var defaults = Path.Combine(_machineBase, ConfigurationConstants.ConfigurationDefaultsFile);
             foreach (var budget in new[] { "bytes", "depth", "elements" })
             {
                 var xml = budget switch
@@ -344,12 +345,23 @@ internal sealed class RestoreInputCases : IDisposable
                 }
             }
             File.WriteAllText(defaults, "<configuration><packageSources><add key=\"default\" value=\"https://default.example.invalid/v3/index.json\"/></packageSources></configuration>");
+            var officialDefaults = External("dotnet", ["nuget", "list", "source", "--configfile", fixture.Config, "--format", "Detailed"], fixture.Root);
+            Expect(officialDefaults, 0, "official implicit defaults control");
+            Contains(officialDefaults.Output, "https://default.example.invalid", "official consumed defaults input");
             var control = Check(fixture);
             Expect(control, 0, "ordinary implicit defaults control");
             using (var report = JsonDocument.Parse(control.StandardOutput))
             {
                 Equal(1, report.RootElement.GetProperty("summary").GetProperty("activeSourceCount").GetInt32(), "implicit defaults consumed even with explicit config");
                 Equal(false, report.RootElement.GetProperty("sources")[0].GetProperty("repositoryControlled").GetBoolean(), "implicit defaults provenance");
+            }
+            if (OperatingSystem.IsLinux())
+            {
+                var ignoredCaseVariant = Path.Combine(_machineBase, "NuGetDefaults.Config");
+                File.WriteAllText(ignoredCaseVariant, "<configuration>" + new string(' ', 2 * 1024 * 1024) + "</configuration>");
+                var ignored = Check(fixture);
+                Expect(ignored, 0, "unconsumed differently cased defaults file");
+                File.Delete(ignoredCaseVariant);
             }
             File.Delete(defaults);
         }
@@ -622,7 +634,11 @@ internal sealed class RestoreInputCases : IDisposable
     }
     public void Dispose()
     {
-        foreach (var link in _directoryLinks.AsEnumerable().Reverse()) Directory.Delete(link);
+        foreach (var link in _directoryLinks.AsEnumerable().Reverse())
+        {
+            if (OperatingSystem.IsWindows()) Directory.Delete(link);
+            else File.Delete(link); // unlink also handles dangling and self-referential directory symlinks
+        }
         Directory.Delete(_root, recursive: true);
     }
     private sealed record RestoredProject(string Root, string Path, string Config)
