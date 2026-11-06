@@ -40,7 +40,8 @@ text into the JSON document.
 Incomplete restore graphs/evaluated inputs and malformed solution membership
 produce exit `2` with no JSON/SARIF success document. Unknown winning mapping
 keys produce `FF004` and, when no configured enabled winner remains, `FF003`
-within a completed policy report (exit `1`). `FF006` covers enabled HTTP sources
+within a completed policy report (exit `1`), including configurations with zero
+enabled sources. `FF006` covers enabled HTTP sources
 and disabled TLS certificate validation. These triggers use the version-1
 report shape and existing diagnostic identities.
 

@@ -425,22 +425,26 @@ internal sealed class RestoreInputCases : IDisposable
     {
         var fixture = Project("mapping", """<ItemGroup><PackageReference Include="Company.Secret" Version="1.0.0"/></ItemGroup>""");
         foreach (var sourceState in new[] { "unknown", "disabled" })
-        {
-            foreach (var winning in new[] { "Company.Secret", "Company.S*", "Company.*", "*" })
+            foreach (var activeEnabled in new[] { true, false })
             {
-                var fallback = winning is "Company.Secret" or "Company.S*" ? "Company.*" : "*";
-                var equal = winning == "*";
-                var disabled = sourceState == "disabled" ? "<disabledPackageSources><add key=\"missing\" value=\"true\"/></disabledPackageSources>" : "";
-                var extra = sourceState == "disabled" ? "<add key=\"missing\" value=\"https://disabled.example.invalid/v3/index.json\"/>" : "";
-                File.WriteAllText(fixture.Config, $"<configuration><packageSources><clear/><add key=\"active\" value=\"https://active.example.invalid/v3/index.json\"/>{extra}</packageSources>{disabled}<packageSourceMapping><packageSource key=\"missing\"><package pattern=\"{winning}\"/></packageSource><packageSource key=\"active\"><package pattern=\"{fallback}\"/></packageSource></packageSourceMapping></configuration>");
-                var result = Check(fixture);
-                Expect(result, sourceState == "unknown" || !equal ? 1 : 0, sourceState + " " + winning);
-                Diagnostic(result, "FF004", sourceState == "unknown");
-                Diagnostic(result, "FF003", !equal);
-                Diagnostic(result, "FF002", false);
-                if (!equal) Contains(result.StandardOutput, "no eligible active source", "no eligible source identity");
+                foreach (var winning in new[] { "Company.Secret", "Company.S*", "Company.*", "*" })
+                {
+                    var fallback = winning is "Company.Secret" or "Company.S*" ? "Company.*" : "*";
+                    var equal = winning == "*";
+                    var disabledKeys = new List<string>();
+                    if (sourceState == "disabled") disabledKeys.Add("missing");
+                    if (!activeEnabled) disabledKeys.Add("active");
+                    var disabled = "<disabledPackageSources>" + string.Concat(disabledKeys.Select(key => $"<add key=\"{key}\" value=\"true\"/>")) + "</disabledPackageSources>";
+                    var extra = sourceState == "disabled" ? "<add key=\"missing\" value=\"https://disabled.example.invalid/v3/index.json\"/>" : "";
+                    File.WriteAllText(fixture.Config, $"<configuration><packageSources><clear/><add key=\"active\" value=\"https://active.example.invalid/v3/index.json\"/>{extra}</packageSources>{disabled}<packageSourceMapping><packageSource key=\"missing\"><package pattern=\"{winning}\"/></packageSource><packageSource key=\"active\"><package pattern=\"{fallback}\"/></packageSource></packageSourceMapping></configuration>");
+                    var result = Check(fixture);
+                    Expect(result, sourceState == "unknown" || !equal || !activeEnabled ? 1 : 0, sourceState + " " + winning + "/active=" + activeEnabled);
+                    Diagnostic(result, "FF004", sourceState == "unknown");
+                    Diagnostic(result, "FF003", !equal || !activeEnabled);
+                    Diagnostic(result, "FF002", false);
+                    if (!equal || !activeEnabled) Contains(result.StandardOutput, "no eligible active source", "no eligible source identity");
+                }
             }
-        }
         // Equal exact and prefix winners retain the configured active source beside unknown/disabled keys.
         foreach (var state in new[] { "unknown", "disabled" })
             foreach (var pattern in new[] { "Company.Secret", "Company.*" })
@@ -454,7 +458,12 @@ internal sealed class RestoreInputCases : IDisposable
                 Diagnostic(result, "FF003", false);
                 Diagnostic(result, "FF002", false);
             }
-        Console.WriteLine("Mapping: unknown/disabled exact, prefix and wildcard winners; diagnostic identities and equal-specificity controls.");
+        File.WriteAllText(fixture.Config, "<configuration><packageSources><clear/></packageSources><packageSourceMapping><packageSource key=\"missing\"><package pattern=\"*\"/></packageSource></packageSourceMapping></configuration>");
+        var absent = Check(fixture);
+        Expect(absent, 1, "mapping with no configured source");
+        Diagnostic(absent, "FF004", true);
+        Diagnostic(absent, "FF003", true);
+        Console.WriteLine("Mapping: unknown/disabled exact, prefix and wildcard winners; zero enabled/configured sources; diagnostic identities and equal-specificity controls.");
     }
 
     private void SourceSecurity()

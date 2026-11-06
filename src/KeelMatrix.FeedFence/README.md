@@ -44,7 +44,7 @@ mapping IDs beat the longest prefix, which beats `*`; equal winners produce
 `FF002`. Inherited active sources produce `FF005`. A successful restore does not
 prove repository-owned deterministic policy.
 
-Unknown or disabled winning mapping keys cannot promote less-specific patterns: unknown keys produce `FF004`, and no eligible source produces `FF003`. `FF006` reports enabled HTTP sources and HTTPS sources that disable TLS certificate validation; normal HTTPS/local feeds pass, and narrow exceptions require a target and reason. Repository provenance resolves complete path ancestry, including links and junctions; unresolved paths are uncontrolled.
+Unknown or disabled winning mapping keys cannot promote less-specific patterns: unknown keys produce `FF004`, and no eligible source produces `FF003`, including when mapping is active with zero enabled/configured sources. `FF006` reports enabled HTTP sources and HTTPS sources that disable TLS certificate validation; normal HTTPS/local feeds pass, and narrow exceptions require a target and reason. Repository provenance resolves complete path ancestry, including links and junctions; unresolved paths are uncontrolled.
 
 Analysis never creates a missing user configuration. If no repository/path `packageSources` clear removes possible user defaults, an absent user file produces exit `2`. Initialize it with `dotnet nuget list source` or use `--config`. Machine `NuGetDefaults.config` still applies even with an explicit config or clear. Additional user `.config`/`.Config` files share NuGet's combined ordering.
 

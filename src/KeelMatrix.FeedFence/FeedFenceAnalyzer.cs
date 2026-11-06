@@ -17,7 +17,7 @@ internal sealed class FeedFenceAnalyzer
         var configuration = EffectiveConfig.Load(target.RestoreContext, target.RepositoryRoot, options.ConfigPath);
         var policy = FeedFencePolicy.Load(target.RepositoryRoot, options.PolicyPath);
         var packageIds = RestoreGraphReader.ReadFromProjects(target.ProjectPaths);
-        if (packageIds.Count > 0 && configuration.ActiveSources.Count == 0)
+        if (packageIds.Count > 0 && configuration.ActiveSources.Count == 0 && !configuration.MappingEnabled)
         {
             throw new AnalysisException("the restored package graph is non-empty but the effective NuGet configuration has no active package sources; restore artifacts are incomplete.");
         }

@@ -72,7 +72,7 @@ Exit codes are stable:
 
 * `FF001` — multiple active sources are available without mapping (violation). Add mapping or reduce active sources; this does not prove feed trust by itself.
 * `FF002` — multiple sources remain at the same winning specificity (violation). Make the exact/prefix/wildcard winner unique; textual overlap at lower specificity is not enough.
-* `FF003` — a direct or transitive resolved package has no eligible mapped source (violation). Correct mapping and restore; FeedFence does not restore for you.
+* `FF003` — mapping is active and a direct or transitive resolved package has no eligible active source, including configurations with zero enabled sources (violation). Correct mapping and source settings; FeedFence does not restore for you.
 * `FF004` — a mapping source key does not correspond to any configured source key (violation). NuGet accepts case-only differences; genuinely invalid source identities still fail. URLs do not define source identity.
 * `FF005` — an active source comes from inherited or external configuration (warning; violation with `--strict`). Move required policy into the repository or document intentional inheritance.
 * `FF006` — an enabled source uses plain HTTP or disables TLS certificate validation (violation). Use HTTPS with certificate validation or a narrow reasoned exception. Disabled sources are inapplicable; ordinary HTTPS and local file feeds are allowed. FeedFence does not validate reachability or credentials.

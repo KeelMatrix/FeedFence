@@ -86,6 +86,7 @@ internal sealed record CliOptions(
             "Requires the last restore's obj/<project-file-name>.nuget.dgspec.json evaluated inputs.",
             "Incomplete dependency closure or solution membership fails with exit 2 and no partial report.",
             "FF006 reports enabled HTTP sources and disabled TLS certificate validation.",
+            "FF003 reports no eligible mapped source, including zero enabled sources when mapping is active.",
             "Missing user settings without a packageSources clear require initialization or --config.",
             "FeedFence never restores packages or contacts package feeds during analysis.",
             "",
