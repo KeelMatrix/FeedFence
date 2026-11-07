@@ -6,6 +6,8 @@ Consumer-facing capabilities and release history for FeedFence.
 
 ### Fixed
 
+- Inspect policy and Git marker types correctly on Intel macOS by pairing the native metadata entry point with its inode64 layout; validate native Intel and arm64 source and installed commands separately.
+
 - Reject non-regular policy files before opening them, including FIFOs without producers, sockets, devices and resolved aliases; invalid `.git` object types fail closed without hiding ancestor policy.
 
 - Preserve ancestor repository policy in Git-free source trees and reject ambiguous, unreadable, non-file or physically external implicit policies before emitting a report; explicit external `--policy` overrides remain supported.

@@ -536,14 +536,16 @@ internal sealed partial class RestoreInputCases : IDisposable
             : External(_tool, arguments, fixture.Root);
     }
 
-    public void PolicySpecialFiles()
+    public void PolicySpecialFiles(bool failureControl = false)
     {
         if (OperatingSystem.IsWindows())
         {
             Console.WriteLine("N/A: Unix FIFO/socket/device policy objects; Windows policy, link and access controls run in PolicyDiscovery.");
             return;
         }
-        var result = External("python3", [Path.Combine(AppContext.BaseDirectory, "PolicySpecialFiles.py"), "--tool", _tool], _root, 180000);
+        var arguments = new List<string> { Path.Combine(AppContext.BaseDirectory, "PolicySpecialFiles.py"), "--tool", _tool };
+        if (failureControl) arguments.Add("--failure-control");
+        var result = External("python3", arguments, _root, 240000);
         Console.Write(result.StandardOutput);
         Expect(result, 0, "native Unix policy object suite (required capabilities; no silent skips)");
     }

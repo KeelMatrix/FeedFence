@@ -52,7 +52,7 @@ before data access, including resolved aliases. Only directory and regular-file
 Git marker types may stop discovery; invalid types fail closed before a report.
 Inputs must stay stable during analysis;
 the filesystem checks do not provide atomic isolation from concurrent changes.
-The [README policy and CLI contract](README.md#repository-policy) defines
+The [policy and report contract](docs/report-contract.md) defines
 discovery boundaries, absence, overrides and limits.
 
 Logical and physical target ancestry are both inspected. An alias cannot hide

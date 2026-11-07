@@ -58,7 +58,10 @@ than a replacement configuration engine.
 
 Keep changes narrow and add or update tests for user-visible behavior. For CLI
 changes, update the root and package READMEs together and verify help text,
-exit codes, stdout/stderr separation, and deterministic machine output.
+exit codes, stdout/stderr separation, and deterministic machine output. The
+[policy and report contract](docs/report-contract.md) owns policy discovery,
+filesystem input requirements, exits and versioned reports; reconcile every
+affected summary with it in the same change.
 
 Do not add a supported in-process API or a public API baseline to the shipping
 tool without an approved product-scope change.

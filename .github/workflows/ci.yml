@@ -23,10 +23,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - windows-latest
-          - ubuntu-latest
-          - macos-latest
+        include:
+          - os: windows-latest
+            architecture: X64
+          - os: ubuntu-latest
+            architecture: X64
+          - os: macos-latest
+            architecture: Arm64
+          - os: macos-15-intel
+            architecture: X64
+
+    env:
+      FEEDFENCE_TEST_ARCHITECTURE: ${{ matrix.architecture }}
 
     steps:
       - name: Check out source
@@ -76,6 +84,18 @@ jobs:
       - name: Run CLI contract tests
         shell: pwsh
         run: dotnet run --project tests/FeedFenceCliTests/KeelMatrix.FeedFence.CliTests.csproj -c Release --no-build
+
+      - name: Verify native policy runner failure propagation
+        if: runner.os != 'Windows'
+        shell: pwsh
+        run: |
+          $output = dotnet run --project tests/FeedFenceCliTests/KeelMatrix.FeedFence.CliTests.csproj -c Release --no-build -- --policy-runner-failure-control 2>&1
+          if ($LASTEXITCODE -ne 1) { throw 'Native policy runner failure was not propagated.' }
+          if (($output -join "`n") -notmatch 'Intentional native policy runner failure control') {
+            throw "Native policy runner failed for an unexpected reason: $output"
+          }
+          Write-Output 'PASS: intentional native policy failure reached the CLI runner exit code.'
+          exit 0
 
       - name: Run Phase 0 probe
         shell: pwsh

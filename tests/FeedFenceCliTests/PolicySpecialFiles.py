@@ -5,6 +5,7 @@ import datetime
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import signal
 import socket
@@ -20,11 +21,15 @@ def main():
     parser.add_argument("--tool", required=True)
     parser.add_argument("--filter", default="")
     parser.add_argument("--evidence-json")
+    parser.add_argument("--failure-control", action="store_true")
     args = parser.parse_args()
+    if args.failure_control:
+        raise RuntimeError("Intentional native policy runner failure control")
     if os.name != "posix" or not hasattr(os, "mkfifo") or not hasattr(socket, "AF_UNIX"):
         raise RuntimeError("Native Unix FIFO and socket capabilities are required")
     tool = Path(args.tool).resolve()
     command = ["dotnet", str(tool)] if tool.suffix == ".dll" else [str(tool)]
+    print("Native filesystem host:", platform.system(), platform.release(), platform.machine())
     rows = []
     with tempfile.TemporaryDirectory(prefix="feedfence-policy-objects-") as temporary:
         root = Path(temporary)
@@ -55,7 +60,7 @@ def main():
         def snapshot():
             result = []
             # lstat identifies objects; read only regular bytes and never follow links.
-            for directory in (repository, root / "objects"):
+            for directory in (repository, root / "objects", root / "logical"):
                 if not directory.exists():
                     continue
                 for parent, directories, files in os.walk(directory, followlinks=False):
@@ -66,10 +71,10 @@ def main():
                         result.append((str(path.relative_to(root)), metadata.st_mode, metadata.st_rdev, value))
             return sorted(result)
 
-        def check(label, expected, override=None):
+        def check(label, expected, override=None, targets=None):
             if args.filter and args.filter not in label:
                 return
-            for target in (project, solution):
+            for target in targets or (project, solution):
                 for report_format in ("text", "json", "sarif"):
                     before = snapshot()
                     argv = command + ["check", str(target), "--config", str(config), "--format", report_format]
@@ -232,6 +237,28 @@ def main():
         override = objects / "external.json"
         override.write_text(protected)
         check("regular-explicit-external", 1, override)
+        policy.write_text(protected)
+        logical = root / "logical"
+        logical.mkdir()
+        (logical / "src").symlink_to(repository / "src", target_is_directory=True)
+        logical_targets = (logical / project.relative_to(repository), logical / solution.relative_to(repository))
+        check("physical-ancestry-protected", 1, targets=logical_targets)
+        for kind in ("fifo", "socket"):
+            policy.unlink()
+            bound = special(policy, kind)
+            check("physical-ancestry-policy-" + kind, 2, targets=logical_targets)
+            remove(policy, bound)
+            logical_policy = logical / "feedfence.json"
+            bound = special(logical_policy, kind)
+            check("logical-ancestry-policy-" + kind, 2, targets=logical_targets)
+            remove(logical_policy, bound)
+            policy.write_text(protected)
+            bound = special(logical / ".git", kind)
+            check("logical-ancestry-git-" + kind, 2, targets=logical_targets)
+            remove(logical / ".git", bound)
+            bound = special(marker, kind)
+            check("physical-ancestry-git-" + kind, 2, targets=logical_targets)
+            remove(marker, bound)
         if not rows:
             raise RuntimeError("No cases selected")
     if args.evidence_json:

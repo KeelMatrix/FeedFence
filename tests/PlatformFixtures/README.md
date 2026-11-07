@@ -28,3 +28,7 @@ resolved aliases for policies and Git markers, all formats, nested project and
 solution, empty error stdout and unchanged inputs. Required Python 3 or object
 capability failures fail the gate; Windows reports these Unix-only cases as N/A.
 The same native suite runs against the isolated installed exact package.
+CI runs separate native Intel and arm64 macOS jobs and checks the .NET process
+architecture. The native cases also cover special policy and marker objects in
+both ancestry views of directory aliases. A supplementary buffer replay varies
+mode, permissions and inode bits independently; it is not native platform proof.

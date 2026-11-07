@@ -48,7 +48,8 @@ pwsh ./scripts/Test-ReleaseOrchestration.ps1
 - The probe must not implement a second NuGet configuration or mapping engine.
 - Analysis is read-only with respect to fixture inputs and must not invoke
   network sources or credential providers.
-- `README.md` owns policy discovery/loading and CLI behavior. Keep policy boundary
+- `docs/report-contract.md` owns policy discovery/loading, filesystem inputs,
+  exits and report behavior. Keep policy boundary
   discovery independent of NuGet's restore context. Git-free trees must retain
   applicable ancestor policy; unusable or ambiguous implicit policy fails closed.
   Inspect both logical and physical target ancestry so directory links cannot
@@ -56,7 +57,8 @@ pwsh ./scripts/Test-ReleaseOrchestration.ps1
   Inspect resolved filesystem types before data access: policies require regular
   files; Git markers require directory/regular-file types. Unix special objects
   must fail promptly. The native Python 3 regression runs through shipping and
-  installed CLI suites on Linux/macOS; missing required capabilities fail.
+  installed CLI suites on Linux and both Intel/arm64 macOS; missing required
+  capabilities fail. Pair each native import symbol with its returned layout.
 - Use evaluated `.nuget.dgspec.json` restore inputs rather than interpreting
   project XML. Validate dependency closure and required framework/runtime targets
   in assets and lock graphs; NuGet lock runtime entries are base-framework deltas.

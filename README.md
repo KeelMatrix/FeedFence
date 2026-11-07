@@ -107,6 +107,9 @@ Exact IDs beat the longest prefix, and the longest prefix beats `*`. An equal wi
 
 ## Repository policy
 
+The [policy and report contract](docs/report-contract.md) is the source of truth
+for discovery, filesystem inputs, exit behavior and machine reports.
+
 This section and the command contract above define policy discovery and loading. Git metadata is optional. A directory input first resolves one project or solution. From that selected file's logical directory and fully resolved physical directory, FeedFence searches both ancestor chains for `feedfence.json`, including file aliases. Each search includes the nearest `.git` directory or file and stops there; without Git it continues to the filesystem root. Intermediate project or solution directories do not stop the search. The same entry reached through aliases counts once. No policy entry in either completed search means optional policy is absent. Distinct ancestor entries, conflicting repository boundaries for one entry, or a selected target redirected outside its implicit policy boundary fail with exit `2`. A policy above either ancestry cannot silently disappear. Supply an intentional `--policy` override to select one file.
 
 For a unique, consistent implicit policy, its ancestor search's physical Git root is the repository boundary. Without Git, the policy's physical directory supplies it. With no policy, provenance uses the physical ancestry's Git root, then the logical ancestry's Git root, or the selected physical directory when neither has Git. NuGet settings still use the selected target's original restore context; `--config` does not disable FeedFence policy discovery.
@@ -156,7 +159,7 @@ The tool has no supported in-process library API in v1. It targets `net8.0`.
 
 ## Supported Platforms
 
-FeedFence supports Windows, Linux, and macOS. The repository's three-OS CI matrix runs the Release build, CLI contracts, NuGet-equivalence probe, platform-specific configuration/path fixtures, exact package inspection, and installed-tool consumer gate on each supported operating system.
+FeedFence supports Windows, Linux, and macOS. CI runs the Release build, CLI contracts, NuGet-equivalence probe, platform-specific configuration/path fixtures, exact package inspection, and installed-tool consumer gate on Windows, Linux, Intel macOS and arm64 macOS. Each job verifies its CLI test process architecture.
 
 Native Linux and macOS tests also exercise policy FIFOs without producers, sockets and existing character devices, and invalid Git marker types, through shipping and installed commands. Windows exercises regular-file, directory, link and access controls; Unix special objects do not apply there.
 

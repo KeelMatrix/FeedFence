@@ -95,6 +95,7 @@ internal sealed record CliOptions(
             "Implicit policy must be a readable regular file inside the physical repository boundary.",
             "Only directory or regular-file .git markers bound discovery; other object types exit 2.",
             "Policy FIFOs, sockets and devices are rejected before opening, including explicit overrides.",
+            "Policy and report contract: https://github.com/KeelMatrix/FeedFence/blob/main/docs/report-contract.md",
             "All policy links and ancestors resolve before repository ownership is checked.",
             "Conflicting ancestry or a target redirected outside its implicit policy repository exits 2.",
             "Unusable policy paths or discovery failures exit 2 with no report in every format.",

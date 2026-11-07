@@ -88,8 +88,15 @@ actual permission denials and explicit external overrides. Every case runs in
 text, JSON and SARIF and checks read-only behavior; failed analysis must emit no
 stdout report. Windows uses ACL denial and junctions; Unix uses mode denial and
 symbolic links. File-link tests require link privilege on Windows and report a
-skip if it is unavailable. The [README contract](../README.md#repository-policy)
+skip if it is unavailable. The [policy and report contract](report-contract.md)
 owns the discovery/loading semantics.
+CI requires separate Intel (`macos-15-intel`) and arm64 (`macos-latest`) macOS
+jobs, in addition to Linux and Windows. `FEEDFENCE_TEST_ARCHITECTURE` checks the
+actual .NET test process architecture. `--metadata-only` runs a supplementary
+mode/permission/inode buffer replay and native-symbol/layout selection checks;
+it does not replace native execution. On Unix, `--policy-runner-failure-control`
+must exit `1` with the intentional Python failure: CI verifies that the actual
+native regression failure reaches the CLI runner before accepting the job.
 `--policy-only` also runs `PolicySpecialFiles.py` on native Linux/macOS; use
 `--policy-objects-only` to run that bounded family alone. Python 3 and working
 FIFO/socket capabilities are required there; unavailable capabilities fail the
