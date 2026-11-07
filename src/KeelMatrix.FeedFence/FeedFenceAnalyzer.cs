@@ -14,8 +14,9 @@ internal sealed class FeedFenceAnalyzer
     public static AnalysisResult Analyze(CliOptions options)
     {
         var target = TargetResolver.Resolve(options.TargetPath);
-        var configuration = EffectiveConfig.Load(target.RestoreContext, target.RepositoryRoot, options.ConfigPath);
-        var policy = FeedFencePolicy.Load(target.RepositoryRoot, options.PolicyPath);
+        var policyContext = RepositoryPolicyContext.Discover(target.DiscoveryStart, options.PolicyPath);
+        var policy = FeedFencePolicy.Load(policyContext);
+        var configuration = EffectiveConfig.Load(target.RestoreContext, policyContext.RepositoryRoot, options.ConfigPath);
         var packageIds = RestoreGraphReader.ReadFromProjects(target.ProjectPaths);
         if (packageIds.Count > 0 && configuration.ActiveSources.Count == 0 && !configuration.MappingEnabled)
         {
@@ -614,7 +615,7 @@ internal static class Provenance
         return ("external inherited configuration", false);
     }
 
-    private static bool IsWithinDirectory(string path, string directory)
+    internal static bool IsWithinDirectory(string path, string directory)
     {
         var relative = Path.GetRelativePath(Path.GetFullPath(directory), Path.GetFullPath(path));
         return relative == "." ||
@@ -624,7 +625,7 @@ internal static class Provenance
              !relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal));
     }
 
-    internal static string? ResolvePhysicalPath(string path)
+    internal static string? ResolvePhysicalPath(string path, string? requiredRoot = null)
     {
         try
         {
@@ -651,6 +652,10 @@ internal static class Provenance
                         return null;
                     }
                     fullPath = Path.GetFullPath(Path.Combine([target.FullName, .. parts[(index + 1)..]]));
+                    if (requiredRoot is not null && !IsWithinDirectory(fullPath, requiredRoot))
+                    {
+                        return null;
+                    }
                     redirected = true;
                     break;
                 }
@@ -743,12 +748,12 @@ internal static class TargetResolver
 
             if (extension.Equals(".csproj", StringComparison.OrdinalIgnoreCase))
             {
-                return new(FindRepositoryRoot(Path.GetDirectoryName(fullInput)!), [fullInput], Path.GetDirectoryName(fullInput)!);
+                return new(Path.GetDirectoryName(fullInput)!, [fullInput], Path.GetDirectoryName(fullInput)!);
             }
 
             if (SupportedProjectExtensions.Contains(extension))
             {
-                return new(FindRepositoryRoot(Path.GetDirectoryName(fullInput)!), [fullInput], Path.GetDirectoryName(fullInput)!);
+                return new(Path.GetDirectoryName(fullInput)!, [fullInput], Path.GetDirectoryName(fullInput)!);
             }
 
             throw new InvocationException("the supplied path must identify a solution or project.");
@@ -780,7 +785,7 @@ internal static class TargetResolver
         return projects.Length switch
         {
             0 => throw new InvocationException("the current directory contains no solution or project."),
-            1 => new(FindRepositoryRoot(fullInput), projects, Path.GetDirectoryName(projects[0])!),
+            1 => new(fullInput, projects, Path.GetDirectoryName(projects[0])!),
             _ => throw new InvocationException("the current directory contains multiple projects; supply one solution or project path.")
         };
     }
@@ -811,7 +816,7 @@ internal static class TargetResolver
             throw new InvocationException("the supplied solution contains no readable projects.");
         }
 
-        return new(FindRepositoryRoot(solutionDirectory), declaredProjects, solutionDirectory);
+        return new(solutionDirectory, declaredProjects, solutionDirectory);
     }
 
     private static string[] ReadSlnProjects(string solutionPath, string solutionDirectory)
@@ -890,20 +895,4 @@ internal static class TargetResolver
         }
     }
 
-    private static string FindRepositoryRoot(string start)
-    {
-        var directory = new DirectoryInfo(start);
-        while (directory is not null)
-        {
-            var gitMarker = Path.Combine(directory.FullName, ".git");
-            if (Directory.Exists(gitMarker) || File.Exists(gitMarker))
-            {
-                return directory.FullName;
-            }
-
-            directory = directory.Parent;
-        }
-
-        return Path.GetFullPath(start);
-    }
 }

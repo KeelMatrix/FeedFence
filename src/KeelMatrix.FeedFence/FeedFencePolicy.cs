@@ -26,28 +26,32 @@ internal sealed class FeedFencePolicy
 
     public IReadOnlyList<PackageRule> PackageRules { get; }
 
-    public static FeedFencePolicy Load(string repositoryRoot, string? explicitPath)
+    public static FeedFencePolicy Load(RepositoryPolicyContext context)
     {
-        var path = explicitPath is null ? Path.Combine(repositoryRoot, "feedfence.json") : GetFullPath(explicitPath);
-        if (!File.Exists(path))
+        if (context.PolicyPath is null)
         {
-            if (explicitPath is null)
-            {
-                return Empty;
-            }
-
-            throw new AnalysisException("the supplied FeedFence policy could not be read.");
-        }
-
-        var info = new FileInfo(path);
-        if (info.Length > MaxBytes)
-        {
-            throw new AnalysisException("the FeedFence policy exceeds the supported input size.");
+            return Empty;
         }
 
         try
         {
+            var path = Provenance.ResolvePhysicalPath(context.PolicyPath, context.IsExplicit ? null : context.RepositoryRoot)
+                ?? throw new AnalysisException(context.IsExplicit
+                    ? "the FeedFence policy path could not be resolved to a readable file."
+                    : "the implicit FeedFence policy path is unresolved or leaves the repository; use a readable repository-owned file or an intentional --policy override.");
+            if (!context.IsExplicit && !Provenance.IsWithinDirectory(path, context.RepositoryRoot))
+            {
+                throw new AnalysisException("the implicit FeedFence policy resolves outside the repository; use a repository-owned file or an intentional --policy override.");
+            }
+            if ((File.GetAttributes(path) & FileAttributes.Directory) != 0)
+            {
+                throw new AnalysisException("the FeedFence policy path must identify a readable file, not a directory.");
+            }
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 16 * 1024, FileOptions.SequentialScan);
+            if (stream.Length > MaxBytes)
+            {
+                throw new AnalysisException("the FeedFence policy exceeds the supported input size.");
+            }
             using var document = JsonDocument.Parse(stream, new JsonDocumentOptions { MaxDepth = 32 });
             return Parse(document.RootElement);
         }
@@ -315,17 +319,6 @@ internal sealed class FeedFencePolicy
         return result.Cast<string>().ToArray();
     }
 
-    private static string GetFullPath(string path)
-    {
-        try
-        {
-            return Path.GetFullPath(path);
-        }
-        catch
-        {
-            throw new AnalysisException("the supplied FeedFence policy path is invalid.");
-        }
-    }
 }
 
 internal sealed record PackageRule(string Pattern, bool IsPrivate, IReadOnlyList<string> AllowedSources);

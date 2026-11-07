@@ -58,7 +58,7 @@ feedfence --help
 feedfence --version
 ```
 
-`path` may be one solution, one project, or an omitted path (the current directory). `--config <path>` replaces NuGet hierarchy discovery with the specified configuration; NuGet's implicit machine defaults still apply. `--policy <path>` selects an explicit policy file; otherwise `feedfence.json` is read from the repository root when present. `--strict` promotes inherited active-source warning `FF005` to a violation. `--format` defaults to deterministic text and also supports deterministic JSON and SARIF.
+`path` may be one solution, one project, or an omitted path (the current directory). `--config <path>` replaces NuGet hierarchy discovery with the specified configuration; NuGet's implicit machine defaults still apply. `--policy <path>` selects an explicit policy file, including an intentional external file, instead of [implicit repository policy discovery](#repository-policy). `--strict` promotes inherited active-source warning `FF005` to a violation. `--format` defaults to deterministic text and also supports deterministic JSON and SARIF.
 
 Successful reports are written only to stdout. Invocation and analysis errors are written only to stderr; machine output is never mixed with progress or noise.
 
@@ -106,6 +106,12 @@ A public/private configuration keeps source and mapping keys exactly aligned:
 Exact IDs beat the longest prefix, and the longest prefix beats `*`. An equal winner is `FF002`. A successful restore only proves that NuGet found packages; FeedFence checks the deterministic repository-owned policy. Inherited active sources produce `FF005` (warning, or violation with `--strict`). Package Source Mapping does not constrain every NuGet metadata query, and FeedFence never contacts feeds during analysis.
 
 ## Repository policy
+
+This section and the command contract above define policy discovery and loading. Git metadata is optional. Starting at the selected project/solution directory (or the supplied directory), FeedFence resolves the physical directory and searches its ancestors for `feedfence.json`. Search includes the nearest `.git` directory or file and stops there; without Git it continues to the filesystem root. Intermediate project or solution directories do not stop the search. No policy entry means optional policy is absent; multiple ancestor entries are ambiguous and fail with exit `2`. Supply an intentional `--policy` override to select one file.
+
+With Git, its marker directory is the repository boundary. Without Git, the unique policy's directory supplies that boundary; if policy is absent, the selected discovery directory is the configuration-provenance fallback. NuGet settings still use the selected target's original restore context; `--config` does not disable FeedFence policy discovery.
+
+An implicit policy must resolve to a readable file physically inside that boundary. Complete path ancestry, symbolic links, junctions and link chains are resolved; links to internal files are accepted. Each redirect must stay inside the boundary, even if an outside link could eventually return to an internal file. Unreadable discovery directories, malformed policies, directories at the policy path, dangling/cyclic/unresolvable links and outside targets fail with exit `2` and no stdout report in text, JSON or SARIF. Only a completed absence check permits analysis without a policy. `--policy` replaces implicit discovery and may select an external file or override an invalid or ambiguous default; the explicit file must still be readable and valid. Policy files are limited to 256 KiB and JSON depth 32. These checks assume inputs are stable during analysis; they do not provide atomic isolation from concurrent filesystem changes.
 
 An optional `feedfence.json` keeps policy deliberately small. The schema is version `1`:
 
@@ -157,6 +163,7 @@ FeedFence supports Windows, Linux, and macOS. The repository's three-OS CI matri
 - Missing restore artifacts or evaluated inputs: run `dotnet restore` for the same target and intended configuration/TFMs; retain its `.nuget.dgspec.json` companion. FeedFence never restores or executes MSBuild for you.
 - Absent user NuGet configuration: initialize it with `dotnet nuget list source`, use an explicit `--config`, or clear inherited package sources in repository configuration.
 - Malformed config/policy or assets disagreement: fix the input and rerun; FeedFence fails closed with exit `2`.
+- Ambiguous policy discovery: remove the unintended ancestor policy or select the intended file with `--policy`. For an externally linked default, use a repository-owned file or an intentional explicit override.
 - `FF004`: mapping identity is matched to the configured source key using NuGet's case-insensitive source identity; case-only differences are accepted, while an unknown source key fails.
 - `FF005`: inspect user/machine configuration and move required policy into the repository, or use strict mode.
 

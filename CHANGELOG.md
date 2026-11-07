@@ -4,6 +4,10 @@ Consumer-facing capabilities and release history for FeedFence.
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve ancestor repository policy in Git-free source trees and reject ambiguous, unreadable, non-file or externally linked implicit policies before emitting a report; explicit external `--policy` overrides remain supported.
+
 ### Added
 
 - Offline NuGet source-policy checks for already-restored SDK projects and whole

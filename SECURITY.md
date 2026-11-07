@@ -41,6 +41,16 @@ reports enabled HTTP sources and disabled TLS certificate validation. Exceptions
 must be narrow and reasoned. These checks do not verify a server's certificate,
 reachability or credentials and do not contact the feed.
 
+Repository policy does not require Git metadata. An implicit `feedfence.json`
+must be uniquely discovered and resolve to a readable file inside the physical
+repository boundary. An unusable entry, unreadable discovery directory,
+ambiguous policy or external target fails with exit `2` and no partial report.
+Explicit `--policy` overrides may intentionally select external files, with the
+same parsing and read requirements. Inputs must stay stable during analysis;
+the filesystem checks do not provide atomic isolation from concurrent changes.
+The [README policy and CLI contract](README.md#repository-policy) defines
+discovery boundaries, absence, overrides and limits.
+
 FeedFence telemetry is best-effort and activates only after a completed analysis
 with a resolved package and an effective source-policy evaluation. FeedFence
 calls the shared client's parameterless activation API and attaches no analysis

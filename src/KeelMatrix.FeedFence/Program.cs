@@ -89,12 +89,17 @@ internal sealed record CliOptions(
             "FF006 reports enabled HTTP sources and disabled TLS certificate validation.",
             "FF003 reports no eligible mapped source, including zero enabled sources when mapping is active.",
             "Missing user settings without a packageSources clear require initialization or --config.",
+            "Policy discovery searches physical target ancestors through .git, or the filesystem root without Git.",
+            "Absent policy is optional; multiple ancestor policies are ambiguous and fail with exit 2.",
+            "Implicit policy must be a readable file inside the physical repository boundary.",
+            "Unusable policy paths or discovery failures exit 2 with no report in every format.",
             "FeedFence never restores packages or contacts package feeds during analysis.",
             "",
             "Options:",
             "  --config <path>  Use this NuGet configuration instead of hierarchy discovery.",
             "                   NuGet's implicit machine defaults still apply and are bounded before parsing.",
             "  --policy <path>  Use this feedfence.json instead of the repository default.",
+            "                   May intentionally select an external file or replace an invalid/ambiguous default.",
             "  --strict         Treat inherited active sources (FF005) as violations.",
             "  --format text|json|sarif",
             "                   Select deterministic human-readable, JSON, or SARIF output.",
@@ -258,7 +263,7 @@ internal sealed record MappingSelection(
     IReadOnlyList<SourceInfo> Sources,
     IReadOnlyList<string> WinningPatterns);
 
-internal sealed record ProjectTarget(string RepositoryRoot, IReadOnlyList<string> ProjectPaths, string RestoreContext);
+internal sealed record ProjectTarget(string DiscoveryStart, IReadOnlyList<string> ProjectPaths, string RestoreContext);
 
 internal sealed record MatchedPattern(MappingPattern Mapping, int Score);
 

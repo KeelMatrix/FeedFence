@@ -77,6 +77,15 @@ Use `--private-flow-only` for the real local-feed package/project privacy cases,
 including nested and independently included paths, asset flags, selected
 frameworks, all three artifact modes and applicable-node omission negatives.
 These cases run in both the shipping suite and the isolated installed-package gate.
+Use `--policy-only` for real-restored repository policy discovery/loading cases:
+Git-free nested projects/root solutions, ordinary Git and worktree markers,
+multiple ancestor entries, optional absence, unusable paths, complete link ancestry,
+actual permission denials and explicit external overrides. Every case runs in
+text, JSON and SARIF and checks read-only behavior; failed analysis must emit no
+stdout report. Windows uses ACL denial and junctions; Unix uses mode denial and
+symbolic links. File-link tests require link privilege on Windows and report a
+skip if it is unavailable. The [README contract](../README.md#repository-policy)
+owns the discovery/loading semantics.
 `tests/Write-RestoreFixture.ps1` supplies evaluated-input companions only for
 synthetic parser fixtures; the restore-equivalence tests use real SDK output.
 

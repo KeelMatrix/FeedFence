@@ -13,6 +13,12 @@ internal static class Program
         {
             var toolIndex = Array.IndexOf(args, "--tool");
             var tool = toolIndex < 0 ? Path.Combine(AppContext.BaseDirectory, "KeelMatrix.FeedFence.dll") : args[toolIndex + 1];
+            if (args.Contains("--policy-only", StringComparer.Ordinal))
+            {
+                using var policyCases = new RestoreInputCases(tool);
+                policyCases.PolicyDiscovery();
+                return 0;
+            }
             if (args.Contains("--private-flow-only", StringComparer.Ordinal))
             {
                 using var privateCases = new RestoreInputCases(tool);

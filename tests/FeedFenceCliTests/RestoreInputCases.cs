@@ -62,6 +62,7 @@ internal sealed partial class RestoreInputCases : IDisposable
         SolutionMembers();
         ConfigInputs();
         PhysicalProvenance();
+        PolicyDiscovery();
         MappingWinners();
         SourceSecurity();
         Console.WriteLine($"PASS: real restore/input families ({_assertions} assertions), command={Path.GetFileName(_tool)}");
