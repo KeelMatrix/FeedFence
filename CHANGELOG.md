@@ -8,6 +8,8 @@ Consumer-facing capabilities and release history for FeedFence.
 
 - Preserve ancestor repository policy in Git-free source trees and reject ambiguous, unreadable, non-file or physically external implicit policies before emitting a report; explicit external `--policy` overrides remain supported.
 - Resolve complete policy link ancestry before checking repository ownership, so internal targets reached through filesystem aliases remain valid.
+- Check logical and physical target ancestry together so source-directory links cannot hide policy; conflicting boundaries fail closed and explicit overrides remain available.
+- Discover policy from the resolved project/solution for directory inputs and retain both ancestry views for selected file aliases.
 
 ### Added
 

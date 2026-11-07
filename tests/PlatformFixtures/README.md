@@ -20,3 +20,5 @@ the package gate.
 Those real-restored cases include Git-free/Git/worktree policy discovery,
 physical policy links and ancestors, actual platform permission denial, explicit
 external overrides and empty stdout on policy-loading failures in all formats.
+Both logical and physical policy ancestry are covered for selected directory,
+project/solution file aliases and inward/outward source-directory link chains.

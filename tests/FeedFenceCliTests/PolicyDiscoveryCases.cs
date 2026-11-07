@@ -99,6 +99,8 @@ internal sealed partial class RestoreInputCases
         File.WriteAllText(external, ProtectedPolicy);
 
         PolicyLinks(fixture, repository, policy, external);
+        PolicyResolvedDirectoryTarget(fixture);
+        PolicyTargetFileAliases();
         File.WriteAllText(policy, ProtectedPolicy);
         PolicyReadDenial(fixture, policy, isDirectory: false);
         PolicyReadDenial(fixture, repository, isDirectory: true);
@@ -106,6 +108,74 @@ internal sealed partial class RestoreInputCases
         PolicyReadDenial(fixture, repository, isDirectory: true);
         PolicyResult(fixture, 0, "absence after all failure controls");
         Console.WriteLine($"PASS: repository policy discovery/loading ({_assertions - start} assertions): real restore, Git-free/Git/worktree, ambiguity, links, permissions, overrides, all formats, read-only; command={Path.GetFileName(_tool)}");
+    }
+
+    private void PolicyResolvedDirectoryTarget(RestoredProject fixture)
+    {
+        var selected = Project("policy-selector/repository/src/App", """<ItemGroup><PackageReference Include="Company.Secret" Version="1.0.0"/></ItemGroup>""");
+        Directory.Delete(Path.Combine(selected.Root, ".git"));
+        var repository = Path.GetFullPath(Path.Combine(selected.Root, "../.."));
+        var parent = Path.GetDirectoryName(repository)!;
+        File.WriteAllText(Path.Combine(repository, "feedfence.json"), ProtectedPolicy);
+        Directory.CreateDirectory(Path.Combine(repository, ".git"));
+        PolicyResult(fixture, 1, "parent directory selection retains resolved project policy", parent, snapshotRoot: parent);
+        Directory.Delete(Path.Combine(repository, ".git"));
+        PolicyResult(fixture, 1, "Git-free parent directory selection retains resolved project policy", parent, snapshotRoot: parent);
+    }
+
+    private void PolicyTargetFileAliases()
+    {
+        var fixture = Project("policy-file-links/repository/src/App", """<ItemGroup><PackageReference Include="Company.Secret" Version="1.0.0"/></ItemGroup>""", restore: false);
+        Directory.Delete(Path.Combine(fixture.Root, ".git"));
+        var repository = Path.GetFullPath(Path.Combine(fixture.Root, "../.."));
+        var outer = Path.GetDirectoryName(repository)!;
+        var physical = Path.Combine(outer, "physical");
+        Directory.CreateDirectory(Path.Combine(physical, ".git"));
+        Directory.CreateDirectory(Path.Combine(repository, ".git"));
+        var physicalProject = Path.Combine(physical, "Actual.csproj");
+        var content = File.ReadAllText(fixture.Path);
+        File.WriteAllText(physicalProject, content);
+        File.Delete(fixture.Path);
+        try { File.CreateSymbolicLink(fixture.Path, physicalProject); }
+        catch (UnauthorizedAccessException) when (OperatingSystem.IsWindows())
+        {
+            Console.WriteLine("SKIP: selected project/solution file aliases require Windows link privilege.");
+            return;
+        }
+        Restore(fixture);
+        var solution = PolicySolution(repository, fixture.Path);
+        var physicalSolution = Path.Combine(physical, "Actual.sln");
+        File.Move(solution, physicalSolution);
+        File.CreateSymbolicLink(solution, physicalSolution);
+        Expect(External("dotnet", ["restore", solution, "--configfile", fixture.Config, "--force", "--verbosity", "quiet"], repository), 0, "SDK restore through solution file alias");
+        var logicalPolicy = Path.Combine(repository, "feedfence.json");
+        var physicalPolicy = Path.Combine(physical, "feedfence.json");
+        foreach (var target in new[] { fixture.Path, solution })
+        {
+            PolicyResult(fixture, 0, "file alias without policy in either view", target, snapshotRoot: outer);
+            File.WriteAllText(physicalPolicy, ProtectedPolicy);
+            PolicyResult(fixture, 1, "file alias retains physical policy", target, snapshotRoot: outer);
+            File.WriteAllText(logicalPolicy, ProtectedPolicy);
+            PolicyResult(fixture, 2, "file alias with conflicting ancestor policies", target, snapshotRoot: outer);
+            PolicyResult(fixture, 1, "explicit override of file alias ambiguity", target, explicitPolicy: logicalPolicy, snapshotRoot: outer);
+            File.Delete(physicalPolicy);
+            PolicyResult(fixture, 2, "file alias cannot hide logical repository policy", target, snapshotRoot: outer);
+            File.Delete(logicalPolicy);
+        }
+        File.WriteAllText(physicalPolicy, ProtectedPolicy);
+        var middle = Path.Combine(repository, "Forward.csproj");
+        File.CreateSymbolicLink(middle, physicalProject);
+        File.Delete(fixture.Path);
+        File.CreateSymbolicLink(fixture.Path, middle);
+        Restore(fixture);
+        PolicyResult(fixture, 1, "project file alias chain retains physical policy", snapshotRoot: outer);
+        File.Delete(fixture.Path);
+        var internalProject = Path.Combine(repository, "Internal.csproj");
+        File.WriteAllText(internalProject, content);
+        File.CreateSymbolicLink(fixture.Path, internalProject);
+        File.WriteAllText(logicalPolicy, ProtectedPolicy);
+        Restore(fixture);
+        PolicyResult(fixture, 1, "internal project file alias retains repository policy", snapshotRoot: outer);
     }
 
     private static string PolicySolution(string directory, string project)
@@ -228,6 +298,39 @@ internal sealed partial class RestoreInputCases
         var projectAlias = Path.Combine(Path.GetDirectoryName(repository)!, "project-alias");
         LinkDirectory(projectAlias, fixture.Root);
         PolicyResult(fixture, 1, "linked target ancestor retains actual repository policy", Path.Combine(projectAlias, "Project.csproj"));
+        var projectAliasChain = Path.Combine(Path.GetDirectoryName(repository)!, "project-alias-chain");
+        LinkDirectory(projectAliasChain, projectAlias);
+        PolicyResult(fixture, 1, "inward project alias chain retains physical policy", Path.Combine(projectAliasChain, "Project.csproj"));
+        var externalProject = Project("policy-boundary/external-project", """<ItemGroup><PackageReference Include="Company.Secret" Version="1.0.0"/></ItemGroup>""");
+        Directory.Delete(Path.Combine(externalProject.Root, ".git"));
+        var externalProjectLink = Path.Combine(repository, "external-project-link");
+        LinkDirectory(externalProjectLink, externalProject.Root);
+        var externalTarget = Path.Combine(externalProjectLink, "Project.csproj");
+        PolicyResult(fixture, 2, "logical repository policy cannot disappear through a target link outside", externalTarget);
+        var externalProjectChain = Path.Combine(repository, "external-project-chain");
+        LinkDirectory(externalProjectChain, externalProjectLink);
+        var externalChainTarget = Path.Combine(externalProjectChain, "Project.csproj");
+        PolicyResult(fixture, 2, "logical policy cannot disappear through an outward target chain", externalChainTarget);
+        var git = Path.Combine(repository, ".git");
+        Directory.Delete(git);
+        PolicyResult(fixture, 2, "Git-free logical policy cannot disappear through a target link outside", externalTarget);
+        PolicyResult(fixture, 2, "Git-free logical policy cannot disappear through an outward target chain", externalChainTarget);
+        File.WriteAllText(git, "gitdir: ../../worktree-metadata\n");
+        PolicyResult(fixture, 2, "worktree logical policy cannot disappear through an outward target chain", externalChainTarget);
+        File.Delete(git);
+        Directory.CreateDirectory(git);
+        var physicalPolicy = Path.Combine(externalProject.Root, "feedfence.json");
+        File.WriteAllText(physicalPolicy, ProtectedPolicy);
+        PolicyResult(fixture, 2, "logical and physical ancestor policies conflict", externalTarget);
+        PolicyResult(fixture, 1, "explicit policy resolves linked target ambiguity", externalTarget, explicitPolicy: physicalPolicy);
+        File.Delete(policy);
+        PolicyResult(fixture, 2, "one policy entry with conflicting repository ownership", externalTarget);
+        Directory.Delete(git);
+        PolicyResult(fixture, 1, "Git-free physical policy through an ancestor alias", externalTarget);
+        File.Delete(physicalPolicy);
+        PolicyResult(fixture, 0, "linked target with no policy in either ancestry", externalTarget);
+        Directory.CreateDirectory(git);
+        File.WriteAllText(policy, ProtectedPolicy);
         File.Delete(policy);
         PolicyResult(fixture, 1, "explicit linked external directory", explicitPolicy: Path.Combine(outside, "policy.json"));
         PolicyResult(fixture, 1, "explicit ordinary external file", explicitPolicy: external);
@@ -284,9 +387,10 @@ internal sealed partial class RestoreInputCases
         }
     }
 
-    private void PolicyResult(RestoredProject fixture, int expected, string name, string? target = null, string? explicitPolicy = null, bool explicitConfig = true, bool snapshot = true)
+    private void PolicyResult(RestoredProject fixture, int expected, string name, string? target = null, string? explicitPolicy = null, bool explicitConfig = true, bool snapshot = true, string? snapshotRoot = null)
     {
-        var before = snapshot ? PolicySnapshot(Path.GetDirectoryName(Path.GetFullPath(Path.Combine(fixture.Root, "../../..")))!) : "";
+        snapshotRoot ??= Path.GetDirectoryName(Path.GetFullPath(Path.Combine(fixture.Root, "../../..")))!;
+        var before = snapshot ? PolicySnapshot(snapshotRoot) : "";
         foreach (var format in new[] { "text", "json", "sarif" })
         {
             var arguments = new List<string> { "check", target ?? fixture.Path, "--format", format };
@@ -316,7 +420,7 @@ internal sealed partial class RestoreInputCases
                 Equal(expected == 1, hasProtectedFinding, name + " retains protected-package enforcement");
             }
         }
-        if (snapshot) Equal(before, PolicySnapshot(Path.GetDirectoryName(Path.GetFullPath(Path.Combine(fixture.Root, "../../..")))!), name + " is read-only");
+        if (snapshot) Equal(before, PolicySnapshot(snapshotRoot), name + " is read-only");
     }
 
     private static string PolicySnapshot(string root)

@@ -89,10 +89,12 @@ internal sealed record CliOptions(
             "FF006 reports enabled HTTP sources and disabled TLS certificate validation.",
             "FF003 reports no eligible mapped source, including zero enabled sources when mapping is active.",
             "Missing user settings without a packageSources clear require initialization or --config.",
-            "Policy discovery searches physical target ancestors through .git, or the filesystem root without Git.",
+            "Policy discovery searches logical and physical target ancestors through .git, or the filesystem root without Git.",
+            "Directory inputs resolve a target first; project/solution file aliases retain both ancestry views.",
             "Absent policy is optional; multiple ancestor policies are ambiguous and fail with exit 2.",
             "Implicit policy must be a readable file inside the physical repository boundary.",
             "All policy links and ancestors resolve before repository ownership is checked.",
+            "Conflicting ancestry or a target redirected outside its implicit policy repository exits 2.",
             "Unusable policy paths or discovery failures exit 2 with no report in every format.",
             "FeedFence never restores packages or contacts package feeds during analysis.",
             "",
@@ -264,7 +266,7 @@ internal sealed record MappingSelection(
     IReadOnlyList<SourceInfo> Sources,
     IReadOnlyList<string> WinningPatterns);
 
-internal sealed record ProjectTarget(string DiscoveryStart, IReadOnlyList<string> ProjectPaths, string RestoreContext);
+internal sealed record ProjectTarget(string DiscoveryPath, IReadOnlyList<string> ProjectPaths, string RestoreContext);
 
 internal sealed record MatchedPattern(MappingPattern Mapping, int Score);
 

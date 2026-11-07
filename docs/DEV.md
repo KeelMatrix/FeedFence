@@ -81,6 +81,8 @@ Use `--policy-only` for real-restored repository policy discovery/loading cases:
 Git-free nested projects/root solutions, ordinary Git and worktree markers,
 multiple ancestor entries, optional absence, unusable paths, complete link ancestry,
 portable absolute ancestor aliases and alias chains,
+inward/outward source-directory links with logical/physical policy conflicts,
+resolved parent-directory selection and real SDK-restored project/solution file aliases,
 actual permission denials and explicit external overrides. Every case runs in
 text, JSON and SARIF and checks read-only behavior; failed analysis must emit no
 stdout report. Windows uses ACL denial and junctions; Unix uses mode denial and

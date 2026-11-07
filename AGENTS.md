@@ -51,6 +51,8 @@ pwsh ./scripts/Test-ReleaseOrchestration.ps1
 - `README.md` owns policy discovery/loading and CLI behavior. Keep policy boundary
   discovery independent of NuGet's restore context. Git-free trees must retain
   applicable ancestor policy; unusable or ambiguous implicit policy fails closed.
+  Inspect both logical and physical target ancestry so directory links cannot
+  hide policy; reject conflicting ownership or a target outside that policy root.
 - Use evaluated `.nuget.dgspec.json` restore inputs rather than interpreting
   project XML. Validate dependency closure and required framework/runtime targets
   in assets and lock graphs; NuGet lock runtime entries are base-framework deltas.

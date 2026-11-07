@@ -44,13 +44,17 @@ reachability or credentials and do not contact the feed.
 Repository policy does not require Git metadata. An implicit `feedfence.json`
 must be uniquely discovered and resolve to a readable file inside the physical
 repository boundary after complete link ancestry is resolved. An unusable entry,
-unreadable discovery directory,
-ambiguous policy or external target fails with exit `2` and no partial report.
+unreadable discovery directory, ambiguous policy or external target fails with
+exit `2` and no partial report.
 Explicit `--policy` overrides may intentionally select external files, with the
 same parsing and read requirements. Inputs must stay stable during analysis;
 the filesystem checks do not provide atomic isolation from concurrent changes.
 The [README policy and CLI contract](README.md#repository-policy) defines
 discovery boundaries, absence, overrides and limits.
+
+Logical and physical target ancestry are both inspected. An alias cannot hide
+policy from either view. Conflicting policy entries or ownership boundaries,
+and a selected target outside its implicit policy repository, fail closed.
 
 FeedFence telemetry is best-effort and activates only after a completed analysis
 with a resolved package and an effective source-policy evaluation. FeedFence
