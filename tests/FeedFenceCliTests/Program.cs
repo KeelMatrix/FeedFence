@@ -17,6 +17,13 @@ internal static class Program
             {
                 using var policyCases = new RestoreInputCases(tool);
                 policyCases.PolicyDiscovery();
+                policyCases.PolicySpecialFiles();
+                return 0;
+            }
+            if (args.Contains("--policy-objects-only", StringComparer.Ordinal))
+            {
+                using var policyCases = new RestoreInputCases(tool);
+                policyCases.PolicySpecialFiles();
                 return 0;
             }
             if (args.Contains("--private-flow-only", StringComparer.Ordinal))

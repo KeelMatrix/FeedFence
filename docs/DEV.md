@@ -9,6 +9,7 @@ for consumer setup.
 - .NET SDK `8.0.425`, selected by `global.json`.
 - PowerShell 7 (`pwsh`).
 - Git.
+- Python 3 on Linux/macOS for native filesystem object regression tests.
 
 Check the SDK before starting:
 
@@ -89,6 +90,18 @@ stdout report. Windows uses ACL denial and junctions; Unix uses mode denial and
 symbolic links. File-link tests require link privilege on Windows and report a
 skip if it is unavailable. The [README contract](../README.md#repository-policy)
 owns the discovery/loading semantics.
+`--policy-only` also runs `PolicySpecialFiles.py` on native Linux/macOS; use
+`--policy-objects-only` to run that bounded family alone. Python 3 and working
+FIFO/socket capabilities are required there; unavailable capabilities fail the
+gate. Cases use a real local-feed Company.Secret restore, nested project and
+solution, every report format, direct/linked/chained/explicit policies, invalid
+Git marker types, existing character devices, valid marker/removal and clean
+absence controls. The tests inspect metadata without reading special objects,
+require prompt product exit `2`, safe stderr, empty stdout and unchanged inputs,
+and kill timed-out process groups as failures. Relative socket binding supports
+long macOS temporary paths. The same suite runs through the exact installed
+package in the pack gate. Windows reports these Unix-only classes as N/A and
+retains its own policy/link/ACL cases. No privileged device creation is needed.
 `tests/Write-RestoreFixture.ps1` supplies evaluated-input companions only for
 synthetic parser fixtures; the restore-equivalence tests use real SDK output.
 

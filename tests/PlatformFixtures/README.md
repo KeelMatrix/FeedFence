@@ -22,3 +22,9 @@ physical policy links and ancestors, actual platform permission denial, explicit
 external overrides and empty stdout on policy-loading failures in all formats.
 Both logical and physical policy ancestry are covered for selected directory,
 project/solution file aliases and inward/outward source-directory link chains.
+On Linux/macOS the CLI suite also runs `PolicySpecialFiles.py`: real restored
+Company.Secret, no-producer FIFOs, sockets, existing character devices and
+resolved aliases for policies and Git markers, all formats, nested project and
+solution, empty error stdout and unchanged inputs. Required Python 3 or object
+capability failures fail the gate; Windows reports these Unix-only cases as N/A.
+The same native suite runs against the isolated installed exact package.

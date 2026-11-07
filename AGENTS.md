@@ -53,6 +53,10 @@ pwsh ./scripts/Test-ReleaseOrchestration.ps1
   applicable ancestor policy; unusable or ambiguous implicit policy fails closed.
   Inspect both logical and physical target ancestry so directory links cannot
   hide policy; reject conflicting ownership or a target outside that policy root.
+  Inspect resolved filesystem types before data access: policies require regular
+  files; Git markers require directory/regular-file types. Unix special objects
+  must fail promptly. The native Python 3 regression runs through shipping and
+  installed CLI suites on Linux/macOS; missing required capabilities fail.
 - Use evaluated `.nuget.dgspec.json` restore inputs rather than interpreting
   project XML. Validate dependency closure and required framework/runtime targets
   in assets and lock graphs; NuGet lock runtime entries are base-framework deltas.

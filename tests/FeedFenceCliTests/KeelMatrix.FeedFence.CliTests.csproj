@@ -9,5 +9,6 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/KeelMatrix.FeedFence/KeelMatrix.FeedFence.csproj" />
+    <None Update="PolicySpecialFiles.py" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

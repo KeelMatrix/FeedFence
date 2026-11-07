@@ -6,6 +6,8 @@ Consumer-facing capabilities and release history for FeedFence.
 
 ### Fixed
 
+- Reject non-regular policy files before opening them, including FIFOs without producers, sockets, devices and resolved aliases; invalid `.git` object types fail closed without hiding ancestor policy.
+
 - Preserve ancestor repository policy in Git-free source trees and reject ambiguous, unreadable, non-file or physically external implicit policies before emitting a report; explicit external `--policy` overrides remain supported.
 - Resolve complete policy link ancestry before checking repository ownership, so internal targets reached through filesystem aliases remain valid.
 - Check logical and physical target ancestry together so source-directory links cannot hide policy; conflicting boundaries fail closed and explicit overrides remain available.

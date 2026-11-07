@@ -17,6 +17,8 @@ updates, and focused pull requests are welcome.
 - .NET SDK `8.0.425` (the repository pins this in `global.json`).
 - PowerShell 7 (`pwsh`) for the repository validation scripts.
 - Git.
+- Python 3 on Linux/macOS for the native policy-object tests described in the
+  [developer guide](docs/DEV.md).
 
 Restore from the repository-controlled source list before building:
 

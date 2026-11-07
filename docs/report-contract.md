@@ -39,8 +39,10 @@ text into the JSON document.
 
 Policy discovery and loading follow the [README contract](../README.md#repository-policy).
 Ambiguous, unreadable, non-file or physically external implicit policy inputs
-produce exit `2`, a stderr error and empty stdout in every format. Optional
-policy absence requires completed logical and physical discovery. Conflicting
+produce exit `2`, a stderr error and empty stdout in every format. Non-regular
+policy objects and invalid Git marker types follow the same error contract,
+including through aliases; FIFO rejection needs no producer. Optional policy
+absence requires completed logical and physical discovery. Conflicting
 entries or ownership boundaries, and a selected target outside its implicit
 policy repository, are analysis failures. Protected-package findings from a
 loaded policy remain `FF007` in a completed exit-`1` report; this repair does not

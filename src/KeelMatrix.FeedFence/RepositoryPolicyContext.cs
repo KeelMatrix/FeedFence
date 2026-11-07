@@ -62,10 +62,10 @@ internal sealed record RepositoryPolicyContext(string RepositoryRoot, string? Po
             }
             if (HasEntry(directory.FullName, ".git"))
             {
-                if (Provenance.ResolvePhysicalPath(Path.Combine(directory.FullName, ".git")) is null)
-                {
-                    throw new AnalysisException("the repository boundary marker could not be resolved.");
-                }
+                var marker = Provenance.ResolvePhysicalPath(Path.Combine(directory.FullName, ".git"))
+                    ?? throw new AnalysisException("the repository boundary marker could not be resolved.");
+                if (PolicyFileSystemEntry.GetType(marker) is not (PolicyEntryType.Directory or PolicyEntryType.RegularFile))
+                    throw new AnalysisException("the repository boundary marker must identify a directory or regular file.");
                 gitRoot = owner;
                 break;
             }

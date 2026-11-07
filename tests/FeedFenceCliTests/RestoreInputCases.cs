@@ -63,6 +63,7 @@ internal sealed partial class RestoreInputCases : IDisposable
         ConfigInputs();
         PhysicalProvenance();
         PolicyDiscovery();
+        PolicySpecialFiles();
         MappingWinners();
         SourceSecurity();
         Console.WriteLine($"PASS: real restore/input families ({_assertions} assertions), command={Path.GetFileName(_tool)}");
@@ -535,7 +536,19 @@ internal sealed partial class RestoreInputCases : IDisposable
             : External(_tool, arguments, fixture.Root);
     }
 
-    private ProcessResult External(string command, IEnumerable<string> arguments, string workingDirectory)
+    public void PolicySpecialFiles()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Console.WriteLine("N/A: Unix FIFO/socket/device policy objects; Windows policy, link and access controls run in PolicyDiscovery.");
+            return;
+        }
+        var result = External("python3", [Path.Combine(AppContext.BaseDirectory, "PolicySpecialFiles.py"), "--tool", _tool], _root, 180000);
+        Console.Write(result.StandardOutput);
+        Expect(result, 0, "native Unix policy object suite (required capabilities; no silent skips)");
+    }
+
+    private ProcessResult External(string command, IEnumerable<string> arguments, string workingDirectory, int timeoutMilliseconds = 60000)
     {
         var info = new ProcessStartInfo(command) { WorkingDirectory = workingDirectory, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var entry in _environment) info.Environment[entry.Key] = entry.Value;
@@ -543,7 +556,7 @@ internal sealed partial class RestoreInputCases : IDisposable
         using var process = Process.Start(info) ?? throw new InvalidOperationException("Could not start test process.");
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
-        if (!process.WaitForExit(60000))
+        if (!process.WaitForExit(timeoutMilliseconds))
         {
             process.Kill(entireProcessTree: true);
             throw new InvalidOperationException("Restore/input test process timed out.");

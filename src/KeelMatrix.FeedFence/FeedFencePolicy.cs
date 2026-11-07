@@ -41,9 +41,9 @@ internal sealed class FeedFencePolicy
             {
                 throw new AnalysisException("the implicit FeedFence policy resolves outside the repository; use a repository-owned file or an intentional --policy override.");
             }
-            if ((File.GetAttributes(path) & FileAttributes.Directory) != 0)
+            if (PolicyFileSystemEntry.GetType(path) != PolicyEntryType.RegularFile)
             {
-                throw new AnalysisException("the FeedFence policy path must identify a readable file, not a directory.");
+                throw new AnalysisException("the FeedFence policy path must identify a readable regular file.");
             }
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 16 * 1024, FileOptions.SequentialScan);
             if (stream.Length > MaxBytes)

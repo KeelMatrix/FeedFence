@@ -42,12 +42,15 @@ must be narrow and reasoned. These checks do not verify a server's certificate,
 reachability or credentials and do not contact the feed.
 
 Repository policy does not require Git metadata. An implicit `feedfence.json`
-must be uniquely discovered and resolve to a readable file inside the physical
+must be uniquely discovered and resolve to a readable regular file inside the physical
 repository boundary after complete link ancestry is resolved. An unusable entry,
 unreadable discovery directory, ambiguous policy or external target fails with
 exit `2` and no partial report.
 Explicit `--policy` overrides may intentionally select external files, with the
-same parsing and read requirements. Inputs must stay stable during analysis;
+same type, parsing and read requirements. FIFOs, sockets and devices are rejected
+before data access, including resolved aliases. Only directory and regular-file
+Git marker types may stop discovery; invalid types fail closed before a report.
+Inputs must stay stable during analysis;
 the filesystem checks do not provide atomic isolation from concurrent changes.
 The [README policy and CLI contract](README.md#repository-policy) defines
 discovery boundaries, absence, overrides and limits.
