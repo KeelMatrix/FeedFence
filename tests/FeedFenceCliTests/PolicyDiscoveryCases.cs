@@ -152,7 +152,7 @@ internal sealed partial class RestoreInputCases
         PolicyResult(fixture, 2, "external policy link chain");
         File.Delete(external);
         File.CreateSymbolicLink(external, internalFile);
-        PolicyResult(fixture, 2, "outside link hop cannot regain implicit ownership by returning inside");
+        PolicyResult(fixture, 1, "complete physical chain resolves to a repository-owned policy");
         PolicyResult(fixture, 1, "explicit outside-then-inside link chain", explicitPolicy: policy);
         File.Delete(external);
         File.WriteAllText(external, ProtectedPolicy);
@@ -208,6 +208,23 @@ internal sealed partial class RestoreInputCases
         var alias = Path.Combine(Path.GetDirectoryName(repository)!, "repository-alias");
         LinkDirectory(alias, repository);
         PolicyResult(fixture, 1, "repository alias with physical ancestry", Path.Combine(alias, Path.GetRelativePath(repository, fixture.Path)));
+        var aliasChain = Path.Combine(Path.GetDirectoryName(repository)!, "repository-alias-chain");
+        LinkDirectory(aliasChain, alias);
+        try
+        {
+            File.Delete(policy);
+            File.CreateSymbolicLink(policy, Path.Combine(alias, "owned.json"));
+            PolicyResult(fixture, 1, "internal policy through absolute ancestor alias");
+            File.Delete(policy);
+            File.CreateSymbolicLink(policy, Path.Combine(aliasChain, "owned.json"));
+            PolicyResult(fixture, 1, "internal policy through absolute ancestor alias chain");
+            File.Delete(policy);
+        }
+        catch (UnauthorizedAccessException) when (OperatingSystem.IsWindows())
+        {
+            Console.WriteLine("SKIP: file-link ancestor alias controls require Windows link privilege.");
+        }
+        File.WriteAllText(policy, ProtectedPolicy);
         var projectAlias = Path.Combine(Path.GetDirectoryName(repository)!, "project-alias");
         LinkDirectory(projectAlias, fixture.Root);
         PolicyResult(fixture, 1, "linked target ancestor retains actual repository policy", Path.Combine(projectAlias, "Project.csproj"));

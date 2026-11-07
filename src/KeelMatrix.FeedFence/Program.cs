@@ -92,6 +92,7 @@ internal sealed record CliOptions(
             "Policy discovery searches physical target ancestors through .git, or the filesystem root without Git.",
             "Absent policy is optional; multiple ancestor policies are ambiguous and fail with exit 2.",
             "Implicit policy must be a readable file inside the physical repository boundary.",
+            "All policy links and ancestors resolve before repository ownership is checked.",
             "Unusable policy paths or discovery failures exit 2 with no report in every format.",
             "FeedFence never restores packages or contacts package feeds during analysis.",
             "",

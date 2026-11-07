@@ -35,10 +35,8 @@ internal sealed class FeedFencePolicy
 
         try
         {
-            var path = Provenance.ResolvePhysicalPath(context.PolicyPath, context.IsExplicit ? null : context.RepositoryRoot)
-                ?? throw new AnalysisException(context.IsExplicit
-                    ? "the FeedFence policy path could not be resolved to a readable file."
-                    : "the implicit FeedFence policy path is unresolved or leaves the repository; use a readable repository-owned file or an intentional --policy override.");
+            var path = Provenance.ResolvePhysicalPath(context.PolicyPath)
+                ?? throw new AnalysisException("the FeedFence policy path could not be resolved to a readable file.");
             if (!context.IsExplicit && !Provenance.IsWithinDirectory(path, context.RepositoryRoot))
             {
                 throw new AnalysisException("the implicit FeedFence policy resolves outside the repository; use a repository-owned file or an intentional --policy override.");

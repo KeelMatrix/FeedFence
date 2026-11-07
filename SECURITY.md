@@ -43,7 +43,8 @@ reachability or credentials and do not contact the feed.
 
 Repository policy does not require Git metadata. An implicit `feedfence.json`
 must be uniquely discovered and resolve to a readable file inside the physical
-repository boundary. An unusable entry, unreadable discovery directory,
+repository boundary after complete link ancestry is resolved. An unusable entry,
+unreadable discovery directory,
 ambiguous policy or external target fails with exit `2` and no partial report.
 Explicit `--policy` overrides may intentionally select external files, with the
 same parsing and read requirements. Inputs must stay stable during analysis;

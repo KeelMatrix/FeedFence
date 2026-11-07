@@ -625,7 +625,7 @@ internal static class Provenance
              !relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal));
     }
 
-    internal static string? ResolvePhysicalPath(string path, string? requiredRoot = null)
+    internal static string? ResolvePhysicalPath(string path)
     {
         try
         {
@@ -652,10 +652,6 @@ internal static class Provenance
                         return null;
                     }
                     fullPath = Path.GetFullPath(Path.Combine([target.FullName, .. parts[(index + 1)..]]));
-                    if (requiredRoot is not null && !IsWithinDirectory(fullPath, requiredRoot))
-                    {
-                        return null;
-                    }
                     redirected = true;
                     break;
                 }

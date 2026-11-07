@@ -6,7 +6,8 @@ Consumer-facing capabilities and release history for FeedFence.
 
 ### Fixed
 
-- Preserve ancestor repository policy in Git-free source trees and reject ambiguous, unreadable, non-file or externally linked implicit policies before emitting a report; explicit external `--policy` overrides remain supported.
+- Preserve ancestor repository policy in Git-free source trees and reject ambiguous, unreadable, non-file or physically external implicit policies before emitting a report; explicit external `--policy` overrides remain supported.
+- Resolve complete policy link ancestry before checking repository ownership, so internal targets reached through filesystem aliases remain valid.
 
 ### Added
 
