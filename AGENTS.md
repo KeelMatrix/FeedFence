@@ -7,6 +7,9 @@
   synthetic fixture corpus.
 - `tests/FeedFenceCliTests` covers shipping and installed CLI contracts, including
   real SDK restore evidence and bounded malformed-input families.
+- `ProbeRunner.cs` and `CliFixture.cs` in their respective test projects list
+  ordered suites; named case files, fixture builders and process runners keep
+  entry points separate from test responsibilities.
 - `scripts` contains local validation helpers.
 - `README.md`, `SECURITY.md`, and `PRIVACY.md` are developer-facing contracts.
 
@@ -37,6 +40,7 @@ pwsh ./scripts/Invoke-RepoHygiene.ps1
 pwsh ./scripts/Invoke-RepoHygiene.ps1 -SelfTest
 pwsh ./scripts/Invoke-ReleaseContract.ps1 -SelfTest
 pwsh ./scripts/Test-ReleaseOrchestration.ps1
+pwsh ./scripts/Invoke-LockContract.ps1 -SelfTest
 ```
 
 ## Invariants

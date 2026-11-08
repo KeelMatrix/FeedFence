@@ -68,6 +68,7 @@ function New-LockContractClone([string]$Path) {
 function Invoke-Contract {
     Assert-WorkflowRestoreContract
     Assert-TrackedLockFiles
+    & (Join-Path $PSScriptRoot 'Test-RestoreCache.ps1')
 
     $tempParent = Get-PhysicalDirectory ([IO.Path]::GetTempPath())
     $tempRoot = Join-Path $tempParent ('feedfence-lock-contract-' + [guid]::NewGuid().ToString('N'))
@@ -85,14 +86,15 @@ function Invoke-Contract {
 
         $driftPath = Join-Path $cloneRoot 'src/KeelMatrix.FeedFence/packages.lock.json'
         $drift = Get-Content -LiteralPath $driftPath -Raw
-        $drift = $drift.Replace(
-            '"contentHash": "BykSf6vn80/TIiWQxMhj2GtCXM3N91G+SdmKiS3AQeVBm44zfz/y7YrBRctkJYKk9rQWe5X4p/2DQpwKOrNumA=="',
-            '"contentHash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="',
-            [StringComparison]::Ordinal)
+        $hashPattern = [regex]::new('"contentHash": "[^"]+"')
+        $mutated = $hashPattern.Replace($drift,
+            '"contentHash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="', 1)
+        if ($mutated -eq $drift) { throw 'Committed lock mutation did not change a content hash.' }
+        $drift = $mutated
         Set-Content -LiteralPath $driftPath -Encoding utf8 -Value $drift
 
         $driftResult = Invoke-Restore $cloneRoot (Join-Path $cloneRoot 'packages')
-        if ($driftResult.ExitCode -eq 0) {
+        if ($driftResult.ExitCode -eq 0 -or $driftResult.Output -notmatch 'NU1403') {
             throw 'Locked restore unexpectedly accepted a mutated committed lock file.'
         }
         Write-Output 'Locked restore with mutated graph: PASS (failed closed).'
@@ -106,6 +108,7 @@ function Invoke-Contract {
 
 if ($SelfTest) {
     Assert-WorkflowRestoreContract
+    & (Join-Path $PSScriptRoot 'Test-RestoreCache.ps1')
     Write-Output 'PASS: lock contract self-test.'
     exit 0
 }

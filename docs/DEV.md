@@ -21,6 +21,15 @@ dotnet --info
 
 Restore with the repository-controlled `NuGet.config`:
 
+Ordinary CLI and Visual Studio restores use the ignored `.nuget/packages`
+folder configured there. This keeps packages built locally for other repositories
+out of this repository's dependency cache, and keeps restored dependencies outside
+the `artifacts` directory cleared before release packaging. Committed lock hashes are still
+required. An explicit `NUGET_PACKAGES`, `--packages`, or `RestorePackagesPath`
+override selects a different cache; conflicting package bytes must fail with
+`NU1403`. Do not update locks to accept an unexplained cached package or clear
+the entire shared NuGet cache to work around it.
+
 ```powershell
 dotnet restore KeelMatrix.FeedFence.sln --configfile NuGet.config --no-cache --locked-mode
 dotnet build KeelMatrix.FeedFence.sln -c Release --no-restore
@@ -65,6 +74,17 @@ containing a dotted solution folder plus a real project. The package gate also
 proves that safe inputs below parent directories
 named `Temp`, `tmp`, and `artifacts` are accepted while secret-bearing and
 repository-internal inputs remain rejected.
+
+Both test projects keep argument dispatch and failure exits in small entry
+points. `tests/Phase0Probe/ProbeRunner.cs` lists the ordered probe suites;
+source/mapping, provenance and parse-safety cases have separate files, with
+fixture construction and process execution in `ProbeFixtures.cs` and
+`ProbeProcesses.cs`. `tests/FeedFenceCliTests/CliTestRunner.cs` selects the CLI
+suites; `CliFixture.cs` lists the ordered synthetic cases. Report, telemetry,
+mapping, source security, graph, policy, identity and solution cases are grouped
+by responsibility, with `CliFixtures.cs` and `CliProcesses.cs` providing their
+shared fixture and process support. The real-restore families retain their
+existing files and run after the synthetic cases.
 
 The CLI suite also starts with real local-feed SDK restores and mutates their
 assets/lock graphs. It covers package/project dependency closure, zero-package
@@ -143,6 +163,13 @@ container byte identity is not promised. Clean reproducibility checkouts omit
 the physical icon and pack the unchanged canonical root asset by an explicit
 input path; no icon copy is created in a validation checkout. The lock contract proves that the
 committed graph restores in locked mode and that a mutated lock fails closed.
+Its offline [cache regression](../scripts/Test-RestoreCache.ps1) also exercises
+ordinary build/restore with a conflicting inherited cache, explicit and
+environment cache overrides, and separate shipping/transitive test lock
+mutations. It requires real `NU1403` failures to reach the build process exit.
+It also builds a real dependency and synthetic tool, clears release artifacts,
+then packs with `--no-restore` to prove that cleanup preserves restored inputs.
+Run `pwsh ./scripts/Invoke-LockContract.ps1 -SelfTest` for that focused regression.
 
 The release contract check is intentionally expected to fail while the
 changelog remains under `[Unreleased]`:

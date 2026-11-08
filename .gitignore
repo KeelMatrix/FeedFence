@@ -16,6 +16,7 @@ tests/Phase0Probe/Fixtures/run/
 *.sln.docstates
 
 ## NuGet and local package output
+.nuget/packages/
 *.nupkg
 *.snupkg
 *.nuget.g.props
