@@ -171,15 +171,17 @@ It also builds a real dependency and synthetic tool, clears release artifacts,
 then packs with `--no-restore` to prove that cleanup preserves restored inputs.
 Run `pwsh ./scripts/Invoke-LockContract.ps1 -SelfTest` for that focused regression.
 
-The release contract check is intentionally expected to fail while the
-changelog remains under `[Unreleased]`:
+The [changelog](../CHANGELOG.md) owns the release version and date. Run the
+same release contract check used by the tag-triggered workflow on the exact
+commit intended for the tag:
 
 ```powershell
 pwsh ./scripts/Invoke-ReleaseContract.ps1 -Tag v0.1.0
 ```
 
-Its self-test proves that an unreleased target, a version mismatch,
-first-release remediation wording, and a first-release category other than
+The check requires a dated release entry outside `[Unreleased]` that agrees
+with the tag and package version. Its self-test proves that an unreleased target,
+a version mismatch, first-release remediation wording, and a first-release category other than
 `Added` fail closed, while a finalized first-release fixture passes.
 
 Finalize the changelog for the release version and verify it on the exact commit
