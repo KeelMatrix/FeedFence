@@ -33,6 +33,8 @@ Run the CLI contract tests, the host platform fixture, and the package gate:
 ```text
 dotnet run --project tests/FeedFenceCliTests/KeelMatrix.FeedFence.CliTests.csproj -c Release --no-build
 pwsh ./scripts/Invoke-PlatformFixtures.ps1 -Configuration Release
+pwsh ./scripts/Invoke-WebsiteMetadata.ps1
+pwsh ./scripts/Invoke-WebsiteMetadata.ps1 -SelfTest
 pwsh ./scripts/Invoke-ReleaseWarningsAsErrors.ps1 -Configuration Release
 pwsh ./scripts/Invoke-PackGate.ps1 -Configuration Release
 pwsh ./scripts/Invoke-DependencyAudit.ps1
@@ -45,6 +47,9 @@ pwsh ./scripts/Invoke-LockContract.ps1 -SelfTest
 
 ## Invariants
 
+- `keelmatrix.website.json` declares package website visibility and artifact role;
+  evaluated shipping properties and both built archives must agree with it.
+  Keep canonical project/repository URLs and existing search tags intact.
 - The Phase 0 probe uses official `NuGet.Configuration` APIs for effective
   values and compares them with actual `dotnet restore` behavior.
 - Probe restore sources are synthetic local file feeds. Do not restore probe

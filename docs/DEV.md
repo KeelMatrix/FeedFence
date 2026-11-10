@@ -42,6 +42,8 @@ Run the repository gates:
 
 ```powershell
 pwsh ./scripts/Invoke-PlatformFixtures.ps1 -Configuration Release
+pwsh ./scripts/Invoke-WebsiteMetadata.ps1
+pwsh ./scripts/Invoke-WebsiteMetadata.ps1 -SelfTest
 pwsh ./scripts/Invoke-PackGate.ps1 -Configuration Release
 pwsh ./scripts/Invoke-ReproducibilityGate.ps1 -Configuration Release
 pwsh ./scripts/Invoke-LockContract.ps1
@@ -133,6 +135,22 @@ retains its own policy/link/ACL cases. No privileged device creation is needed.
 synthetic parser fixtures; the restore-equivalence tests use real SDK output.
 
 ## Release preparation
+
+The root `keelmatrix.website.json` is the per-package classification declaration.
+It contains schema version `1`, the exact packable package IDs, visibility and
+artifact role only. FeedFence is `public-product` / `primary`. Existing published
+versions use this manifest as the migration fallback; do not republish a version
+to add tags. Future packages carry exactly one lowercase visibility sentinel
+and one lowercase role sentinel in `PackageTags`, matching the manifest.
+Keep both project and repository URLs at `https://github.com/KeelMatrix/FeedFence`.
+
+`Invoke-WebsiteMetadata.ps1` evaluates MSBuild properties, including inherited
+values and packability. Its self-test rejects malformed manifests, missing,
+duplicate, conflicting and wrong-case sentinels, ID/classification drift,
+invalid primary counts and noncanonical URLs. CI and release verification run
+both commands. The package gate calls the same validator before packing and
+against both inspected archives; a rejection stops the gate before installation
+or upload. Use `-PackagePath <path>` to inspect an existing candidate archive.
 
 The shipping project is the only packable project. The package gate validates
 the complete `.nupkg` and `.snupkg` archive allowlists, nuspec/tool/runtime and

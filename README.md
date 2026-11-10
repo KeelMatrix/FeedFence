@@ -50,6 +50,11 @@ Name a target explicitly with `feedfence check ./src/App/App.csproj`. Restore mu
 - [Privacy](PRIVACY.md) — telemetry and data-handling contract.
 - [Contributing](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) — community guidance.
 
+[`keelmatrix.website.json`](keelmatrix.website.json) declares
+`KeelMatrix.FeedFence` as this repository's primary public product for website
+discovery. It also classifies published versions that predate the matching
+NuGet tags; no replacement package release is needed for those versions.
+
 ## Command contract
 
 ```text

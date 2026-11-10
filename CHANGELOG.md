@@ -4,6 +4,12 @@ Consumer-facing capabilities and release history for FeedFence.
 
 ## [Unreleased]
 
+### Added
+
+- Declares FeedFence as the primary public product in repository website
+  metadata, with matching tags for the next package release and validation of
+  source and built package metadata.
+
 ## [0.1.0] - 2026-11-08
 
 ### Added

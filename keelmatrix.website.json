@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "packages": {
+    "KeelMatrix.FeedFence": {
+      "visibility": "public-product",
+      "role": "primary"
+    }
+  }
+}

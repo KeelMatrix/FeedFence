@@ -57,6 +57,7 @@ $cases = @(
     @{ Name = 'first gate throws'; Failure = "throw 'Synthetic validator rejection.'"; Files = $true; Finalized = $true; Pass = $false },
     @{ Name = 'first passes and final fails'; Failure = ''; Files = $true; Finalized = $false; Pass = $false },
     @{ Name = 'nested pack failure'; Failure = 'nested'; Helper = 'Invoke-PackGate.ps1'; Files = $true; Finalized = $true; Pass = $false },
+    @{ Name = 'website metadata rejection'; Failure = 'metadata'; Files = $true; Finalized = $true; Pass = $false },
     @{ Name = 'nested reproducibility failure'; Failure = 'nested'; Helper = 'Invoke-ReproducibilityGate.ps1'; Files = $true; Finalized = $true; Pass = $false },
     @{ Name = 'both pass'; Failure = ''; Files = $true; Finalized = $true; Pass = $true }
 )
@@ -98,6 +99,16 @@ foreach ($extension in @('nupkg', 'snupkg')) {
             if ($case.Helper -eq 'Invoke-ReproducibilityGate.ps1') { $packFixture += ' $PSScriptRoot' }
             $packFixture += "`nSet-Content -LiteralPath 'nested-continued' -Value 'unreachable'`n"
         }
+        elseif ($case.Failure -eq 'metadata') {
+            Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Invoke-WebsiteMetadata.ps1') -Destination (Join-Path $fixture 'scripts')
+            Copy-Item -LiteralPath (Join-Path $repositoryRoot 'build/WebsiteMetadata.ps1') -Destination (Join-Path $fixture 'build')
+            Set-Content -LiteralPath (Join-Path $fixture 'src/KeelMatrix.FeedFence/KeelMatrix.FeedFence.csproj') -Value '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework><Version>0.1.0</Version><IsPackable>true</IsPackable><PackageId>KeelMatrix.FeedFence</PackageId><PackageTags>keelmatrix-public-product;keelmatrix-primary</PackageTags><PackageProjectUrl>https://github.com/KeelMatrix/FeedFence</PackageProjectUrl><RepositoryUrl>https://github.com/KeelMatrix/FeedFence</RepositoryUrl><RepositoryType>git</RepositoryType></PropertyGroup></Project>'
+            Set-Content -LiteralPath (Join-Path $fixture 'keelmatrix.website.json') -Value '{"schemaVersion":1,"packages":{"KeelMatrix.FeedFence":{"visibility":"public-product","role":"component"}}}'
+            $packFixture += "`n. (Join-Path `$PSScriptRoot '../build/Invoke-NestedPwsh.ps1')`n"
+            $packFixture += (Get-CheckedFunction 'Invoke-PackGate.ps1') + "`n"
+            $packFixture += "Invoke-Checked 'pwsh' @('-NoProfile', '-File', (Join-Path `$PSScriptRoot 'Invoke-WebsiteMetadata.ps1'))`n"
+            $packFixture += "Set-Content -LiteralPath 'metadata-continued' -Value 'unreachable'`n"
+        }
         else {
             $packFixture += "`n" + $case.Failure + "`n"
         }
@@ -126,6 +137,9 @@ if (Test-Path -LiteralPath variable:\LASTEXITCODE) { exit $LASTEXITCODE }
         }
         if ($case.Failure -eq 'nested' -and ($result.Output -notmatch 'exit code 17' -or (Test-Path -LiteralPath (Join-Path $fixture 'nested-continued')))) {
             $failures.Add("$($case.Name): the shipping nested check did not reject exit 17.")
+        }
+        if ($case.Failure -eq 'metadata' -and ($result.Output -notmatch 'classification disagrees' -or (Test-Path -LiteralPath (Join-Path $fixture 'metadata-continued')))) {
+            $failures.Add('Website metadata rejection did not stop the checked package call and downstream release work.')
         }
         if ($case.Pass -and -not $finalPassed) { $failures.Add('Positive control did not execute the real final validator.') }
         if ($case.Name -eq 'first passes and final fails' -and $result.Output -notmatch 'no dated release section') {

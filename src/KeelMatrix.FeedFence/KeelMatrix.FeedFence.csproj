@@ -18,7 +18,7 @@
     <Authors>KeelMatrix</Authors>
     <Company>KeelMatrix</Company>
     <Description>Audits effective NuGet package sources and Package Source Mapping against the resolved dependency graph. Detects ambiguous, unmapped, inherited, and unsafe restore-source policy.</Description>
-    <PackageTags>nuget;package-source-mapping;nuget-config;dependency-confusion;package-feeds;restore;supply-chain;ci;dotnet-tool</PackageTags>
+    <PackageTags>nuget;package-source-mapping;nuget-config;dependency-confusion;package-feeds;restore;supply-chain;ci;dotnet-tool;keelmatrix-public-product;keelmatrix-primary</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageIcon>icon.png</PackageIcon>

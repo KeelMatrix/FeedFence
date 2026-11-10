@@ -456,6 +456,7 @@ public static class FeedFencePdbInspection
 
 try {
     New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+    Invoke-Checked $pwshExecutable @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'Invoke-WebsiteMetadata.ps1'), '-Configuration', $Configuration)
 
     $projects = Get-ChildItem -LiteralPath $repositoryRoot -Recurse -Filter '*.csproj' -File |
         Where-Object { $_.FullName -notmatch '[\\/]bin[\\/]|[\\/]obj[\\/]' }
@@ -553,6 +554,8 @@ try {
 
     Invoke-Checked $pwshExecutable @('-NoProfile', '-File', $archiveNormalizer, '-Path', $nupkgPath)
     Invoke-Checked $pwshExecutable @('-NoProfile', '-File', $archiveNormalizer, '-Path', $snupkgPath)
+    Invoke-Checked $pwshExecutable @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'Invoke-WebsiteMetadata.ps1'), '-Configuration', $Configuration, '-PackagePath', $nupkgPath)
+    Invoke-Checked $pwshExecutable @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'Invoke-WebsiteMetadata.ps1'), '-Configuration', $Configuration, '-PackagePath', $snupkgPath)
 
     $nupkgStaticEntries = @(
         '_rels/.rels',

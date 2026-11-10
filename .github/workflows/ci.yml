@@ -69,6 +69,14 @@ jobs:
         shell: pwsh
         run: dotnet restore KeelMatrix.FeedFence.sln --configfile NuGet.config --no-cache --locked-mode
 
+      - name: Validate website package metadata
+        shell: pwsh
+        run: pwsh ./scripts/Invoke-WebsiteMetadata.ps1
+
+      - name: Test website package metadata rejection
+        shell: pwsh
+        run: pwsh ./scripts/Invoke-WebsiteMetadata.ps1 -SelfTest
+
       - name: Verify committed lock contract
         shell: pwsh
         run: pwsh ./scripts/Invoke-LockContract.ps1
